@@ -9,14 +9,29 @@ use crossterm::terminal::{
     LeaveAlternateScreen,
 };
 use crossterm::{execute, queue};
+
+use nix::unistd::{close, dup2, execv, fork, getpid, setpgid, tcsetpgrp, ForkResult, Pid};
 use signal_hook::{self, iterator::Signals};
 use std::io::Write;
+use std::os::unix::io::RawFd;
 use std::sync::mpsc;
 use std::time::Duration;
+use tracing::debug;
 use tracing_subscriber;
 
+use parser::Ast;
+use shell::Shell;
+use variable::Value;
+
+#[macro_use]
+mod macros;
+
+mod builtins;
+mod eval;
 mod parser;
-struct Shell {}
+mod path;
+mod shell;
+mod variable;
 
 enum Event {
     Input(TermEvent),
@@ -24,10 +39,28 @@ enum Event {
     NoCompletion,
 }
 
-impl Shell {
-    fn new() -> Self {
-        Self {}
-    }
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum ExitStatus {
+    ExitedWith(i32),
+    Running(Pid /* pgid */),
+    Break,
+    Continue,
+    Return,
+    // The command is not executed because of `noexec`.
+    NoExec,
+}
+
+/// The process execution environment.
+#[derive(Debug, Copy, Clone)]
+pub struct Context {
+    pub stdin: RawFd,
+    pub stdout: RawFd,
+    pub stderr: RawFd,
+    pub pgid: Option<Pid>,
+    /// The process should be executed in background.
+    pub background: bool,
+    /// Is the shell interactive?
+    pub interactive: bool,
 }
 
 struct SmashState {
@@ -40,7 +73,7 @@ struct SmashState {
     clear_below: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct UserInput {
     cursor: usize,
     input: String,
@@ -76,6 +109,12 @@ impl UserInput {
         self.indices.clear();
     }
 
+    pub fn insert(&mut self, ch: char) {
+        self.input.insert(self.byte_index(), ch);
+        self.update_indices();
+        self.cursor += 1;
+    }
+
     pub fn insert_str(&mut self, string: &str) {
         self.input.insert_str(self.byte_index(), string);
         self.update_indices();
@@ -107,7 +146,7 @@ impl SmashState {
             clear_below: 0,
             prompt_len: 0,
             columns: 0,
-            input_stack: Vec::new()
+            input_stack: Vec::new(),
         }
     }
 
@@ -144,12 +183,14 @@ impl SmashState {
                 }
             }
 
-            prompt_len += path.len();
             prompt_str.push_str(&path);
         }
         prompt_str.push_str(" $ ");
         queue!(stdout, Print(prompt_str.replace("\n", "\r\n"))).ok();
+        prompt_len += prompt_str.len();
         stdout.flush().unwrap();
+
+        self.prompt_len = prompt_len;
     }
 
     fn push_buffer_stack(&mut self) {
@@ -207,11 +248,11 @@ impl SmashState {
             queue!(stdout, Clear(ClearType::CurrentLine), cursor::MoveUp(1)).ok();
         }
 
-        // if self.clear_above > 0 {
-        //     // Redraw the prompt since it has been cleared.
-        //     let (prompt_str, _) = self.render_prompt();
-        //     queue!(stdout, Print("\r"), Print(prompt_str.replace("\n", "\r\n"))).ok();
-        // }
+        if self.clear_above > 0 {
+            // Redraw the prompt since it has been cleared.
+            let (prompt_str, _) = (String::new(), 0);
+            queue!(stdout, Print("\r"), Print(prompt_str.replace("\n", "\r\n"))).ok();
+        }
 
         // Print the highlighted input.
         // let h = highlight::highlight(&self.input_ctx, &mut self.shell);
@@ -355,12 +396,10 @@ fn main() {
     tracing_subscriber::fmt::init();
 
     let mut shell = Shell::new();
-    let mut state = SmashState::new(shell);
 
     for (key, value) in std::env::vars() {}
 
     enable_raw_mode().ok();
-    state.render_prompt();
 
     let (tx, rx) = mpsc::channel();
     let tx2 = tx.clone();
@@ -380,23 +419,45 @@ fn main() {
         unreachable!();
     });
 
+    for (key, value) in std::env::vars() {
+        shell.set(&key, Value::String(value.to_owned()), false);
+    }
+
+    let mut state = SmashState::new(shell);
+    state.render_prompt();
+
     'main: loop {
         let mut started_at = None;
 
         match crossterm::event::poll(Duration::from_millis(100)) {
             Ok(true) => loop {
-                tracing::debug!("eventtttttttttttttttttt");
+                let mut needs_redraw = true;
                 if let Ok(TermEvent::Key(ev)) = crossterm::event::read() {
                     match (ev.code, ev.modifiers) {
                         (KeyCode::Char('q'), KeyModifiers::NONE) => break 'main,
                         (KeyCode::Enter, KeyModifiers::NONE) => {
-                            print!("\r\n");
                             disable_raw_mode().ok();
                             enable_raw_mode().ok();
+                            state.run_command();
+                            needs_redraw = false;
+                        }
+                        (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                            // Clear the input.
+                            execute!(std::io::stdout(), Print("\r\n")).ok();
                             state.render_prompt();
+                            state.input.clear();
+                        }
+                        (KeyCode::Char(ch), KeyModifiers::NONE) => {
+                            state.input.insert(ch);
                         }
                         _ => (),
                     }
+                }
+
+                // println!("input: {:?}", state.input.as_str());
+
+                if needs_redraw {
+                    state.print_user_input();
                 }
 
                 match crossterm::event::poll(Duration::from_millis(0)) {

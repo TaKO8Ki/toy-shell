@@ -9,13 +9,14 @@ struct ShellParser;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Ast {
-    terms: Vec<Term>,
+    pub terms: Vec<Term>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Term {
     pub code: String,
     pub pipelines: Vec<Pipeline>,
+    pub background: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -128,6 +129,13 @@ pub enum Span {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Word(pub Vec<Span>);
 
+impl Word {
+    #[inline]
+    pub fn spans(&self) -> &[Span] {
+        &self.0
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Pipeline {
     pub run_if: RunIf,
@@ -194,7 +202,11 @@ fn visit_compound_list(pair: Pair<Rule>) -> Vec<Term> {
         if and_or_list.as_rule() == Rule::and_or_list {
             let code = and_or_list.as_str().to_owned().trim().to_owned();
             let pipelines = visit_and_or_list(and_or_list, RunIf::Always);
-            terms.push(Term { code, pipelines });
+            terms.push(Term {
+                code,
+                pipelines,
+                background,
+            });
         }
 
         if let Some(rest) = rest {
@@ -487,6 +499,7 @@ mod test {
                             assignments: vec![],
                         }],
                     }],
+                    background: false,
                 }],
             })
         );
