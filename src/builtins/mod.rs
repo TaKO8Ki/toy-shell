@@ -1,12 +1,18 @@
+use crate::shell::Shell;
+use crate::ExitStatus;
+
 use thiserror::Error;
 
 mod cd;
 mod exit;
 
-use crate::ExitStatus;
-
 pub trait BuiltinCommand {
-    fn run(&self) -> ExitStatus;
+    fn run(&self, ctx: BuiltinCommandContext) -> ExitStatus;
+}
+
+pub struct BuiltinCommandContext<'a> {
+    pub argv: &'a [String],
+    pub shell: &'a mut Shell,
 }
 
 #[derive(Debug, Error)]

@@ -1,11 +1,12 @@
-use crate::builtins::{BuiltinCommand, BuiltinCommandError};
+use crate::builtins::{BuiltinCommandContext, BuiltinCommandError};
 use crate::parser::{self, Span};
 use crate::parser::{Ast, RunIf, Term};
+use crate::process::{run_in_foreground, ProcessState};
 use crate::shell::Shell;
 use crate::Context;
 use crate::ExitStatus;
 
-use nix::unistd::{close, execv, fork, pipe, ForkResult};
+use nix::unistd::{close, execv, fork, pipe, setpgid, ForkResult};
 use std::ffi::CString;
 use std::os::unix::io::RawFd;
 use tracing::debug;
@@ -113,8 +114,7 @@ fn run_pipeline(
                 }
 
                 if shell.interactive {
-                    // setpgid(pid, pgid.unwrap()).expect("failed to setpgid");
-                    todo!("interactive mode")
+                    setpgid(pid, pgid.unwrap()).expect("failed to setpgid");
                 }
 
                 childs.push(pid);
@@ -160,8 +160,8 @@ fn run_pipeline(
             ExitStatus::ExitedWith(status)
         }
         Some(ExitStatus::Running(_)) => {
-            // let cmd_name = code.to_owned();
-            // let job = shell.create_job(cmd_name, pgid.unwrap(), childs);
+            let cmd_name = code.to_owned();
+            let job = shell.create_job(cmd_name, pgid.unwrap(), childs);
 
             // if !shell.interactive {
             //     if background {
@@ -187,7 +187,11 @@ fn run_pipeline(
             //         _ => unreachable!(),
             //     }
             // }
-            todo!()
+            match run_in_foreground(shell, &job, false) {
+                ProcessState::Completed(status) => ExitStatus::ExitedWith(status),
+                ProcessState::Stopped(_) => ExitStatus::Running(pgid.unwrap()),
+                _ => unreachable!(),
+            }
         }
         Some(ExitStatus::Break) => {
             return ExitStatus::Break;
@@ -364,7 +368,7 @@ pub fn run_internal_command(
         Some(func) => func,
         _ => return Err(BuiltinCommandError::NotFound.into()),
     };
-    let result = command.run();
+    let result = command.run(BuiltinCommandContext { argv, shell });
 
     // TODO: support redirections
 

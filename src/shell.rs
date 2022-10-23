@@ -1,9 +1,15 @@
 use crate::eval::eval;
 use crate::parser;
 use crate::path::PathTable;
+use crate::process::{Job, JobId, ProcessState};
 use crate::variable::Value;
 use crate::ExitStatus;
+
+use nix::sys::termios::{tcgetattr, Termios};
+use nix::unistd::{getpid, Pid};
+use std::collections::{HashMap, HashSet};
 use std::os::unix::io::RawFd;
+use std::rc::Rc;
 use tracing::debug;
 
 pub struct Shell {
@@ -18,6 +24,14 @@ pub struct Shell {
 
     pub interactive: bool,
     path_table: PathTable,
+    pub last_fore_job: Option<Rc<Job>>,
+    background_jobs: HashSet<Rc<Job>>,
+    states: HashMap<Pid, ProcessState>,
+    pub shell_pgid: Pid,
+    pub shell_termios: Option<Termios>,
+    pid_job_mapping: HashMap<Pid, Rc<Job>>,
+    jobs: HashMap<JobId, Rc<Job>>,
+    cd_stack: Vec<String>,
 }
 
 impl Shell {
@@ -29,6 +43,14 @@ impl Shell {
             noexec: false,
             interactive: false,
             path_table: PathTable::new(),
+            last_fore_job: None,
+            background_jobs: HashSet::new(),
+            states: HashMap::new(),
+            shell_pgid: getpid(),
+            shell_termios: None,
+            pid_job_mapping: HashMap::new(),
+            jobs: HashMap::new(),
+            cd_stack: Vec::new(),
         }
     }
 
@@ -90,5 +112,59 @@ impl Shell {
                 self.path_table.scan(path);
             }
         }
+    }
+
+    pub fn background_jobs_mut(&mut self) -> &mut HashSet<Rc<Job>> {
+        &mut self.background_jobs
+    }
+
+    pub fn get_process_state(&self, pid: Pid) -> Option<&ProcessState> {
+        self.states.get(&pid)
+    }
+
+    pub fn set_process_state(&mut self, pid: Pid, state: ProcessState) {
+        self.states.insert(pid, state);
+    }
+
+    pub fn create_job(&mut self, name: String, pgid: Pid, childs: Vec<Pid>) -> Rc<Job> {
+        let id = self.alloc_job_id();
+        let job = Rc::new(Job::new(id, pgid, name, childs.clone()));
+        for child in childs {
+            self.set_process_state(child, ProcessState::Running);
+            self.pid_job_mapping.insert(child, job.clone());
+        }
+
+        self.jobs_mut().insert(id, job.clone());
+        job
+    }
+
+    pub fn jobs_mut(&mut self) -> &mut HashMap<JobId, Rc<Job>> {
+        &mut self.jobs
+    }
+
+    fn alloc_job_id(&mut self) -> JobId {
+        let mut id = 1;
+        while self.jobs.contains_key(&JobId::new(id)) {
+            id += 1;
+        }
+
+        JobId::new(id)
+    }
+
+    pub fn set_interactive(&mut self, interactive: bool) {
+        self.interactive = interactive;
+        self.shell_termios = if interactive {
+            Some(tcgetattr(0 /* stdin */).expect("failed to tcgetattr"))
+        } else {
+            None
+        };
+    }
+
+    pub fn pushd(&mut self, path: String) {
+        self.cd_stack.push(path);
+    }
+
+    pub fn popd(&mut self) -> Option<String> {
+        self.cd_stack.pop()
     }
 }
