@@ -5,6 +5,7 @@ use thiserror::Error;
 
 mod cd;
 mod exit;
+mod export;
 
 pub trait BuiltinCommand {
     fn run(&self, ctx: BuiltinCommandContext) -> ExitStatus;
@@ -25,6 +26,7 @@ pub fn builtin_command(name: &str) -> Option<Box<dyn BuiltinCommand>> {
     match name {
         "cd" => Some(Box::new(cd::Cd)),
         "exit" => Some(Box::new(exit::Exit)),
+        "export" => Some(Box::new(export::Export)),
         _ => None,
     }
 }

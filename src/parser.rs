@@ -121,9 +121,20 @@ pub enum RedirectionType {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+pub enum ExpansionOp {
+    Length,     // ${#parameter}
+    GetOrEmpty, // $parameter and ${parameter}
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Span {
     Literal(String),
     LiteralChars(Vec<LiteralChar>),
+    Parameter {
+        name: String,
+        op: ExpansionOp,
+        quoted: bool,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -271,10 +282,10 @@ fn visit_simple_command(pair: Pair<Rule>) -> Command {
         }
     }
 
-    let assignments = Vec::new();
-    // for assignment in assignments_pairs {
-    //     assignments.push(visit_assignment(assignment));
-    // }
+    let mut assignments = Vec::new();
+    for assignment in assignments_pairs {
+        assignments.push(visit_assignment(assignment));
+    }
 
     Command::SimpleCommand {
         argv,
@@ -442,6 +453,28 @@ fn visit_escaped_word(pair: Pair<Rule>, literal_chars: bool) -> Word {
             Rule::literal_span if !literal_chars => {
                 spans.push(Span::Literal(visit_escape_sequences(span, None)));
             }
+            Rule::param_span => spans.push(visit_param_span(span, false)),
+            Rule::assign_like_prefix => {
+                let mut inner = span.into_inner();
+                let var_name = inner.next().unwrap();
+                let mut s = var_name.as_str().to_owned();
+                s.push('=');
+                spans.push(Span::Literal(s));
+            }
+            Rule::double_quoted_span => {
+                for span_in_quote in span.into_inner() {
+                    match span_in_quote.as_rule() {
+                        Rule::literal_in_double_quoted_span => {
+                            spans.push(Span::Literal(visit_escape_sequences(
+                                span_in_quote,
+                                Some("\"`$"),
+                            )));
+                        }
+                        Rule::param_span => spans.push(visit_param_span(span_in_quote, true)),
+                        _ => unreachable!(),
+                    }
+                }
+            }
             _ => {
                 debug!(?span);
                 unimplemented!("span {:?}", span.as_rule());
@@ -449,6 +482,7 @@ fn visit_escaped_word(pair: Pair<Rule>, literal_chars: bool) -> Word {
         }
     }
 
+    debug!("spans: {:?}", spans);
     Word(spans)
 }
 
@@ -471,6 +505,103 @@ fn visit_command(pair: Pair<Rule>) -> Command {
         // Rule::function_definition => visit_function_definition(inner),
         // Rule::cond_ex => visit_cond_ex(inner),
         _ => unreachable!(),
+    }
+}
+
+fn visit_param_span(pair: Pair<Rule>, quoted: bool) -> Span {
+    let name = pair
+        .into_inner()
+        .next()
+        .unwrap()
+        .as_span()
+        .as_str()
+        .to_owned();
+    let op = ExpansionOp::GetOrEmpty;
+    Span::Parameter { name, op, quoted }
+}
+
+fn visit_assignment(pair: Pair<Rule>) -> Assignment {
+    let mut inner = pair.into_inner();
+
+    let name = inner.next().unwrap().as_span().as_str().to_owned();
+    let index = inner
+        .next()
+        .unwrap()
+        .into_inner()
+        .next()
+        .map(|p| visit_expr(p));
+    let initializer = inner.next().unwrap().into_inner().next().unwrap();
+    match initializer.as_rule() {
+        Rule::string_initializer => {
+            let word = Initializer::String(visit_word(initializer.into_inner().next().unwrap()));
+            Assignment {
+                name,
+                initializer: word,
+                index,
+            }
+        }
+        Rule::array_initializer => {
+            let word =
+                Initializer::Array(initializer.into_inner().map(|p| visit_word(p)).collect());
+            let index = None;
+            Assignment {
+                name,
+                initializer: word,
+                index,
+            }
+        }
+        _ => unreachable!(),
+    }
+}
+
+fn visit_expr(pair: Pair<Rule>) -> Expr {
+    let mut inner = pair.clone().into_inner();
+    let first = inner.next().unwrap();
+    let maybe_op = inner.next();
+
+    match pair.as_rule() {
+        Rule::assign => visit_assign_expr(pair),
+        // Rule::arith => visit_arith_expr(pair),
+        // Rule::term => visit_term(pair),
+        // Rule::factor => visit_factor(pair),
+        // Rule::expr => {
+        //     let lhs = visit_assign_expr(first);
+        //     if let Some(op) = maybe_op {
+        //         let rhs = visit_expr(inner.next().unwrap());
+        //         match op.as_span().as_str() {
+        //             "==" => Expr::Eq(Box::new(lhs), Box::new(rhs)),
+        //             "!=" => Expr::Ne(Box::new(lhs), Box::new(rhs)),
+        //             ">" => Expr::Gt(Box::new(lhs), Box::new(rhs)),
+        //             ">=" => Expr::Ge(Box::new(lhs), Box::new(rhs)),
+        //             "<" => Expr::Lt(Box::new(lhs), Box::new(rhs)),
+        //             "<=" => Expr::Le(Box::new(lhs), Box::new(rhs)),
+        //             _ => unreachable!(),
+        //         }
+        //     } else {
+        //         lhs
+        //     }
+        // }
+        _ => unreachable!(),
+    }
+}
+
+fn visit_assign_expr(pair: Pair<Rule>) -> Expr {
+    let mut inner = pair.clone().into_inner();
+    let first = inner.next().unwrap();
+    match first.as_rule() {
+        Rule::var_name => {
+            let name = first.as_span().as_str().to_owned();
+            let op = inner.next().unwrap();
+            let rhs = visit_expr(inner.next().unwrap());
+            match op.as_span().as_str() {
+                "=" => Expr::Assign {
+                    name,
+                    rhs: Box::new(rhs),
+                },
+                _ => unreachable!(),
+            }
+        }
+        _ => todo!(),
     }
 }
 

@@ -22,6 +22,7 @@ mod macros;
 mod builtins;
 mod eval;
 mod event;
+mod expand;
 mod parser;
 mod path;
 mod process;

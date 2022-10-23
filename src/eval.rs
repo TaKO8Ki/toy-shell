@@ -1,4 +1,5 @@
 use crate::builtins::{BuiltinCommandContext, BuiltinCommandError};
+use crate::expand::expand_words;
 use crate::parser::{self, Span};
 use crate::parser::{Ast, RunIf, Term};
 use crate::process::{run_in_foreground, ProcessState};
@@ -8,6 +9,7 @@ use crate::ExitStatus;
 
 use nix::unistd::{close, execv, fork, pipe, setpgid, ForkResult};
 use std::ffi::CString;
+use std::fs::OpenOptions;
 use std::os::unix::io::RawFd;
 use tracing::debug;
 
@@ -226,7 +228,7 @@ fn run_command(
     shell: &mut Shell,
     command: &parser::Command,
     ctx: &Context,
-) -> Result<ExitStatus, anyhow::Error> {
+) -> anyhow::Result<ExitStatus> {
     if shell.noexec {
         return Ok(ExitStatus::NoExec);
     }
@@ -311,22 +313,9 @@ fn run_simple_command(
     argv: &[parser::Word],
     redirects: &[parser::Redirection],
     assignments: &[parser::Assignment],
-) -> Result<ExitStatus, anyhow::Error> {
+) -> anyhow::Result<ExitStatus> {
     // let argv = expand_words(shell, &expand_alias(shell, argv))?;
-    let mut words = Vec::new();
-    for word in argv {
-        for span in word.spans() {
-            match span {
-                Span::LiteralChars(..) => {
-                    // Internally used by the parser.
-                    unreachable!()
-                }
-                Span::Literal(word) => {
-                    words.push(word.clone());
-                }
-            }
-        }
-    }
+    let argv = expand_words(shell, argv)?;
     if argv.is_empty() {
         // `argv` is empty. For example bash accepts `> foo.txt`; it creates an empty file
         // named "foo.txt".
@@ -343,7 +332,7 @@ fn run_simple_command(
     // }
 
     // Internal commands
-    let result = run_internal_command(shell, &words, ctx.stdin, ctx.stdout, ctx.stderr, redirects);
+    let result = run_internal_command(shell, &argv, ctx.stdin, ctx.stdout, ctx.stderr, redirects);
     match result {
         Ok(status) => return Ok(status),
         Err(err) => match err.downcast_ref::<BuiltinCommandError>() {
@@ -352,8 +341,9 @@ fn run_simple_command(
         },
     }
 
+    debug!("argv: {:?}", argv);
     // External commands
-    run_external_command(shell, ctx, words, redirects, assignments)
+    run_external_command(shell, ctx, argv, redirects, assignments)
 }
 
 pub fn run_internal_command(
@@ -363,7 +353,7 @@ pub fn run_internal_command(
     mut stdout: RawFd,
     mut stderr: RawFd,
     redirects: &[parser::Redirection],
-) -> Result<ExitStatus, anyhow::Error> {
+) -> anyhow::Result<ExitStatus> {
     let command = match crate::builtins::builtin_command(argv[0].as_str()) {
         Some(func) => func,
         _ => return Err(BuiltinCommandError::NotFound.into()),
@@ -381,15 +371,43 @@ pub fn run_external_command(
     argv: Vec<String>,
     redirects: &[parser::Redirection],
     assignments: &[parser::Assignment],
-) -> Result<ExitStatus, anyhow::Error> {
+) -> anyhow::Result<ExitStatus> {
     // let mut fds = Vec::new();
+    // for r in redirects {
+    //     match r.target {
+    //         parser::RedirectionType::File(ref wfilepath) => {
+    //             let mut options = OpenOptions::new();
+    //             match &r.direction {
+    //                 parser::RedirectionDirection::Input => {
+    //                     options.read(true);
+    //                 }
+    //                 parser::RedirectionDirection::Output => {
+    //                     options.write(true).create(true);
+    //                 }
+    //                 parser::RedirectionDirection::Append => {
+    //                     options.write(true).append(true);
+    //                 }
+    //             };
+
+    //             debug!("redirection: options={:?}", options);
+    //             let filepath = expand_word_into_string(shell, wfilepath)?;
+    //             if let Ok(file) = options.open(&filepath) {
+    //                 fds.push((file.into_raw_fd(), r.fd as RawFd))
+    //             } else {
+    //                 debug!("failed to open file: `{}'", filepath);
+    //                 return Ok(ExitStatus::ExitedWith(1));
+    //             }
+    //         }
+    //     }
+    // }
+
     // let argv0 = if argv[0].starts_with('/') || argv[0].starts_with("./") {
     //     CString::new(argv[0].as_str())?
     // } else {
     let argv0 = match shell.path_table().lookup(&argv[0]) {
         Some(path) => CString::new(path)?,
         None => {
-            smash_err!("command not found `{}'", argv[0]);
+            smash_err!("command not found `{}`", argv[0]);
             return Ok(ExitStatus::ExitedWith(1));
         }
     };
@@ -467,12 +485,10 @@ pub fn run_external_command(
                     unreachable!();
                 }
                 Err(nix::errno::Errno::EACCES) => {
-                    println!("aaaaaaaaaaaa");
                     eprintln!("Failed to exec {:?} (EACCESS). chmod(1) may help.", argv0);
                     std::process::exit(1);
                 }
                 Err(err) => {
-                    println!("bbbbbbbbbbbbbb");
                     eprintln!("Failed to exec {:?} ({})", argv0, err);
                     std::process::exit(1);
                 }
