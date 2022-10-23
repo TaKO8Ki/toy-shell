@@ -32,7 +32,6 @@ pub fn expand_word_into_vec(
     for span in word.spans() {
         let (frags, expand) = match span {
             Span::LiteralChars(..) => {
-                // Internally used by the parser.
                 unreachable!()
             }
             Span::Literal(s) => (vec![s.clone()], false),
@@ -43,6 +42,10 @@ pub fn expand_word_into_vec(
                     frags.push(frag);
                 }
                 (frags, !quoted)
+            }
+            Span::Tilde(_) => {
+                let dir = dirs::home_dir().unwrap().to_str().unwrap().to_owned();
+                (vec![dir], false)
             }
         };
 

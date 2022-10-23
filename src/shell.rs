@@ -8,7 +8,10 @@ use crate::ExitStatus;
 use nix::sys::termios::{tcgetattr, Termios};
 use nix::unistd::{getpid, Pid};
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::Read;
 use std::os::unix::io::RawFd;
+use std::path::PathBuf;
 use std::rc::Rc;
 use tracing::debug;
 
@@ -71,6 +74,13 @@ impl Shell {
 
     pub fn path_table(&self) -> &PathTable {
         &self.path_table
+    }
+
+    pub fn run_file(&mut self, script_file: PathBuf) -> std::io::Result<ExitStatus> {
+        let mut f = File::open(script_file)?;
+        let mut script = String::new();
+        f.read_to_string(&mut script)?;
+        Ok(self.run_str(script.as_str()))
     }
 
     /// Parses and runs a script. Stdin/stdout/stderr are 0, 1, 2, respectively.

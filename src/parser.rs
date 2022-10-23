@@ -129,12 +129,14 @@ pub enum ExpansionOp {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Span {
     Literal(String),
+    // Internally used by the parser.
     LiteralChars(Vec<LiteralChar>),
     Parameter {
         name: String,
         op: ExpansionOp,
         quoted: bool,
     },
+    Tilde(Option<String>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -474,6 +476,13 @@ fn visit_escaped_word(pair: Pair<Rule>, literal_chars: bool) -> Word {
                         _ => unreachable!(),
                     }
                 }
+            }
+            Rule::tilde_span => {
+                let username = span
+                    .into_inner()
+                    .next()
+                    .map(|p| p.as_span().as_str().to_owned());
+                spans.push(Span::Tilde(username));
             }
             _ => {
                 debug!(?span);

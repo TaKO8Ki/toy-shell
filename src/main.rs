@@ -71,6 +71,10 @@ fn main() {
         shell.set(&key, Value::String(value.to_owned()), false);
     }
 
+    // Try executing ~/.smashrc
+    let home_dir = dirs::home_dir().unwrap();
+    shell.run_file(home_dir.join(".smashrc")).ok();
+
     let is_tty = std::io::stdout().is_tty();
     shell.set_interactive(is_tty);
 
