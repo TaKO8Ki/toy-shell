@@ -1,4 +1,5 @@
 use crate::eval::eval;
+use crate::history::History;
 use crate::parser;
 use crate::path::PathTable;
 use crate::process::{Job, JobId, ProcessState};
@@ -11,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Read;
 use std::os::unix::io::RawFd;
+use std::path::Path;
 use std::path::PathBuf;
 use std::rc::Rc;
 use tracing::debug;
@@ -42,10 +44,12 @@ pub struct Shell {
     global: Frame,
 
     exported: HashSet<String>,
+
+    history: History,
 }
 
 impl Shell {
-    pub fn new() -> Self {
+    pub fn new(history_path: &Path) -> Self {
         Self {
             last_status: 0,
             errexit: false,
@@ -64,6 +68,7 @@ impl Shell {
             frames: Vec::new(),
             global: Frame::new(),
             exported: HashSet::new(),
+            history: History::new(history_path),
         }
     }
 
@@ -222,6 +227,14 @@ impl Shell {
     #[inline]
     pub fn enter_frame(&mut self) {
         self.frames.push(Frame::new());
+    }
+
+    pub fn history(&self) -> &History {
+        &self.history
+    }
+
+    pub fn history_mut(&mut self) -> &mut History {
+        &mut self.history
     }
 
     #[inline]

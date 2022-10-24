@@ -18,6 +18,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 use tracing::debug;
 
+use crate::history::HistorySelector;
 use crate::process::ExitStatus;
 use crate::shell::Shell;
 
@@ -71,6 +72,12 @@ impl UserInput {
         self.cursor = 0;
         self.input.clear();
         self.indices.clear();
+    }
+
+    pub fn reset(&mut self, input: String) {
+        self.input = input;
+        self.update_indices();
+        self.move_to_end();
     }
 
     pub fn insert(&mut self, ch: char) {
@@ -159,6 +166,12 @@ pub struct SmashState {
     completions_height: usize,
     completions_per_line: usize,
     lines: usize,
+    // history
+    history_selector: HistorySelector,
+    history_selected: usize,
+    history_display_len: usize,
+    history_input_max: usize,
+    history_entries: Vec<String>,
 }
 
 impl Drop for SmashState {
@@ -187,6 +200,11 @@ impl SmashState {
             completions_height: 0,
             completions_per_line: 0,
             lines: 0,
+            history_selected: 0,
+            history_display_len: 0,
+            history_input_max: 0,
+            history_entries: Vec::new(),
+            history_selector: HistorySelector::new(),
         }
     }
 
@@ -446,6 +464,20 @@ impl SmashState {
             (KeyCode::Tab, KeyModifiers::NONE) => {
                 self.do_complete = true;
             }
+            // history
+            (KeyCode::Up, KeyModifiers::NONE) => {
+                self.history_selector
+                    .prev(self.shell.history(), self.input.as_str());
+                if let Some(line) = self.history_selector.current(self.shell.history()) {
+                    self.input.reset(line);
+                }
+            }
+            (KeyCode::Down, KeyModifiers::NONE) => {
+                self.history_selector.next();
+                if let Some(line) = self.history_selector.current(self.shell.history()) {
+                    self.input.reset(line);
+                }
+            }
             // misc
             (KeyCode::Backspace, KeyModifiers::NONE) => {
                 self.input.backspace();
@@ -555,9 +587,9 @@ impl SmashState {
         enable_raw_mode().ok();
         // check_background_jobs(&mut self.shell);
 
-        // self.shell.history_mut().append(self.input.as_str());
+        self.shell.history_mut().append(self.input.as_str());
         self.input.clear();
-        // self.history_selector.reset();
+        self.history_selector.reset();
         self.clear_above = 0;
         self.clear_below = 0;
 
