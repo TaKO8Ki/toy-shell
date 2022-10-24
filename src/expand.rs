@@ -1,6 +1,6 @@
 use crate::parser::ExpansionOp;
+use crate::parser::Span;
 use crate::parser::Word;
-use crate::parser::{self, Span};
 use crate::shell::Shell;
 
 use tracing::debug;

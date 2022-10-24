@@ -1,15 +1,13 @@
 use crate::builtins::{BuiltinCommandContext, BuiltinCommandError};
 use crate::expand::expand_words;
-use crate::parser::{self, Span};
+use crate::parser;
 use crate::parser::{Ast, RunIf, Term};
-use crate::process::{run_in_foreground, ProcessState};
+use crate::process::{run_in_foreground, Context, ProcessState};
 use crate::shell::Shell;
-use crate::Context;
 use crate::ExitStatus;
 
 use nix::unistd::{close, execv, fork, pipe, setpgid, ForkResult};
 use std::ffi::CString;
-use std::fs::OpenOptions;
 use std::os::unix::io::RawFd;
 use tracing::debug;
 

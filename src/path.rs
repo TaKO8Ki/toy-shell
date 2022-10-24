@@ -21,6 +21,10 @@ impl PathTable {
         self.rehash();
     }
 
+    pub fn to_vec(&self) -> Vec<String> {
+        self.table.clone().into_keys().collect()
+    }
+
     pub fn rehash(&mut self) {
         self.table.clear();
         for bin_dir in self.path.split(':').rev() {

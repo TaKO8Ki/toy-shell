@@ -1,3 +1,4 @@
+use crate::context_parser::{self, InputContext};
 use crossterm::cursor::{self, MoveTo};
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::style::{Attribute, Color, Print, SetAttribute, SetForegroundColor};
@@ -6,7 +7,15 @@ use crossterm::terminal::{
     LeaveAlternateScreen,
 };
 use crossterm::{execute, queue};
+use nix::sys::signal::{sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal};
+use signal_hook::{self, iterator::Signals};
+use std::cmp::{max, min};
 use std::io::Write;
+use std::ops::Range;
+use std::path::PathBuf;
+use std::sync::mpsc;
+use std::time::Duration;
+use tracing::debug;
 
 use crate::process::ExitStatus;
 use crate::shell::Shell;
@@ -14,6 +23,7 @@ use crate::shell::Shell;
 pub enum Event {
     Input(TermEvent),
     ScreenResized,
+    Completion(Vec<String>),
     NoCompletion,
 }
 
@@ -23,6 +33,11 @@ struct UserInput {
     input: String,
     indices: Vec<usize>,
     word_split: &'static str,
+}
+
+fn truncate(s: &str, len: usize) -> String {
+    // TODO: Return &str
+    s.chars().take(len).collect()
 }
 
 impl UserInput {
@@ -98,6 +113,23 @@ impl UserInput {
             self.indices.push(index.0);
         }
     }
+
+    pub fn replace_range(&mut self, range: Range<usize>, replace_with: &str) {
+        debug!(?range, ?self.input, ?replace_with);
+        let cursor = range.start + replace_with.chars().count();
+        self.input.replace_range(range, replace_with);
+        debug!(?self.input);
+        self.update_indices();
+        self.cursor = cursor;
+    }
+
+    pub fn move_by(&mut self, offset: isize) {
+        if offset < 0 {
+            self.cursor = self.cursor.saturating_sub(offset.abs() as usize);
+        } else {
+            self.cursor = min(self.len(), self.cursor + offset.abs() as usize);
+        }
+    }
 }
 
 pub struct SmashState {
@@ -109,6 +141,15 @@ pub struct SmashState {
     clear_above: usize,
     clear_below: usize,
     exited: Option<ExitStatus>,
+    do_complete: bool,
+    input_ctx: InputContext,
+    completions: Vec<String>,
+    filtered_completions: Vec<String>,
+    selected_completion: usize,
+    completions_show_from: usize,
+    completions_height: usize,
+    completions_per_line: usize,
+    lines: usize,
 }
 
 impl Drop for SmashState {
@@ -128,12 +169,275 @@ impl SmashState {
             columns: 0,
             input_stack: Vec::new(),
             exited: None,
+            do_complete: false,
+            input_ctx: context_parser::parse("", 0),
+            completions: Vec::new(),
+            filtered_completions: Vec::new(),
+            selected_completion: 0,
+            completions_show_from: 0,
+            completions_height: 0,
+            completions_per_line: 0,
+            lines: 0,
+        }
+    }
+
+    pub fn run(&mut self) {
+        let (tx, rx) = mpsc::channel();
+        let tx2 = tx.clone();
+        std::thread::spawn(move || {
+            let signals = Signals::new(&[signal_hook::SIGWINCH]).unwrap();
+            for signal in signals {
+                match signal {
+                    signal_hook::SIGWINCH => {
+                        tx2.send(Event::ScreenResized).ok();
+                    }
+                    _ => {
+                        tracing::warn!("unhandled signal: {}", signal);
+                    }
+                }
+            }
+
+            unreachable!();
+        });
+
+        enable_raw_mode().ok();
+        self.render_prompt();
+
+        let action = SigAction::new(SigHandler::SigIgn, SaFlags::empty(), SigSet::empty());
+        unsafe {
+            sigaction(Signal::SIGINT, &action).expect("failed to sigaction");
+            sigaction(Signal::SIGQUIT, &action).expect("failed to sigaction");
+            sigaction(Signal::SIGTSTP, &action).expect("failed to sigaction");
+            sigaction(Signal::SIGTTIN, &action).expect("failed to sigaction");
+            sigaction(Signal::SIGTTOU, &action).expect("failed to sigaction");
+        }
+
+        loop {
+            let mut started_at = None;
+
+            match crossterm::event::poll(Duration::from_millis(100)) {
+                Ok(true) => loop {
+                    if let Ok(ev) = crossterm::event::read() {
+                        self.handle_event(Event::Input(ev))
+                    }
+
+                    match crossterm::event::poll(Duration::from_millis(0)) {
+                        Ok(true) => (), // Continue reading stdin.
+                        _ => break,
+                    }
+                },
+                _ => {
+                    if let Ok(ev) = rx.try_recv() {
+                        started_at = Some(std::time::SystemTime::now());
+                        self.handle_event(ev);
+                    }
+                }
+            }
+
+            if self.do_complete {
+                let is_argv0 = if let Some(current_span) = self.input_ctx.current_span {
+                    matches!(
+                        &self.input_ctx.spans[current_span],
+                        context_parser::Span::Argv0(_)
+                    )
+                } else {
+                    false
+                };
+
+                debug!(?is_argv0);
+                if is_argv0 {
+                    // Command name completion.
+                    let argv0 = self.current_span_text().unwrap();
+                    debug!(?argv0);
+                    let comps = if argv0.starts_with('/')
+                        || argv0.starts_with('.')
+                        || argv0.starts_with('~')
+                    {
+                        path_completion(argv0, false)
+                    } else {
+                        self.shell.path_table().to_vec()
+                    };
+                    tx.send(Event::Completion(comps)).ok();
+                } else {
+                    let pattern = self.current_span_text().unwrap_or("");
+                    let entries = path_completion(pattern, false);
+                    tx.send(Event::Completion(entries)).ok();
+                }
+
+                self.do_complete = false;
+            }
+        }
+    }
+
+    fn current_span_text(&self) -> Option<&str> {
+        if let Some(current_span_index) = self.input_ctx.current_span {
+            match &self.input_ctx.spans[current_span_index] {
+                context_parser::Span::Literal(literal) | context_parser::Span::Argv0(literal) => {
+                    return Some(literal);
+                }
+                _ => {}
+            };
+        }
+
+        None
+    }
+
+    fn select_completion(&mut self) {
+        if let Some(current_span) = &self.input_ctx.current_literal {
+            if let Some(selected) = self.filtered_completions.get(self.selected_completion) {
+                self.input.replace_range(current_span.clone(), &selected);
+            }
+
+            self.clear_completions();
+        }
+    }
+
+    fn hide_completions(&mut self) {
+        let mut stdout = std::io::stdout();
+        if self.completions_height > 0 {
+            queue!(stdout, cursor::Hide).ok();
+
+            let comps_y_diff = self.clear_below - self.completions_height;
+            if comps_y_diff > 0 {
+                queue!(stdout, cursor::MoveDown(comps_y_diff as u16)).ok();
+            }
+
+            for _ in 0..self.completions_height {
+                queue!(stdout, cursor::MoveDown(1), Clear(ClearType::CurrentLine)).ok();
+            }
+
+            queue!(
+                stdout,
+                cursor::MoveUp((comps_y_diff + self.completions_height) as u16),
+                cursor::Show,
+            )
+            .ok();
+
+            stdout.flush().ok();
+        }
+    }
+
+    fn completion_mode(&self) -> bool {
+        !self.completions.is_empty()
+    }
+
+    fn clear_completions(&mut self) {
+        self.completions.clear();
+    }
+
+    fn update_completion_entries(&mut self, entries: Vec<String>) {
+        self.completions = entries;
+        self.completions_show_from = 0;
+        self.filter_completion_entries();
+
+        if self.filtered_completions.len() == 1 {
+            self.select_completion();
+            self.reparse_input_ctx();
+        }
+
+        self.print_user_input();
+    }
+
+    fn filter_completion_entries(&mut self) {
+        self.filtered_completions = self
+            .completions
+            .iter()
+            .filter(|comp| {
+                self.current_span_text().map_or(false, |text| {
+                    !self.input.is_empty() && comp.starts_with(text)
+                })
+            })
+            .map(|s| s.to_string().replace(" ", "\\ "))
+            .collect();
+        debug!(?self.filtered_completions);
+        self.selected_completion = min(
+            self.selected_completion,
+            self.filtered_completions.len().saturating_sub(1),
+        );
+    }
+
+    fn reparse_input_ctx(&mut self) {
+        self.input_ctx = context_parser::parse(self.input.as_str(), self.input.cursor());
+    }
+
+    pub fn handle_event(&mut self, ev: Event) {
+        match ev {
+            Event::Input(input) => {
+                if let TermEvent::Key(key) = input {
+                    self.handle_key_event(&key)
+                }
+            }
+            Event::ScreenResized => {
+                debug!("screen resize");
+                let screen_size = terminal::size().unwrap();
+                self.columns = screen_size.0 as usize;
+                self.lines = screen_size.1 as usize;
+            }
+            Event::NoCompletion => {
+                todo!()
+            }
+            Event::Completion(comps) => {
+                if comps.is_empty() {
+                    debug!("empty completions")
+                } else {
+                    debug!(?comps);
+                    self.update_completion_entries(comps);
+                }
+            }
         }
     }
 
     pub fn handle_key_event(&mut self, ev: &KeyEvent) {
         let mut needs_redraw = true;
         match (ev.code, ev.modifiers) {
+            // completion
+            (KeyCode::Esc, KeyModifiers::NONE)
+            | (KeyCode::Char('q'), KeyModifiers::NONE)
+            | (KeyCode::Char('c'), KeyModifiers::CONTROL)
+            | (KeyCode::Backspace, KeyModifiers::NONE)
+                if self.completion_mode() =>
+            {
+                self.clear_completions();
+            }
+            (KeyCode::Enter, KeyModifiers::NONE) if self.completion_mode() => {
+                self.select_completion()
+            }
+            (KeyCode::Left, KeyModifiers::NONE) | (KeyCode::BackTab, KeyModifiers::SHIFT)
+                if self.completion_mode() =>
+            {
+                self.selected_completion = self.selected_completion.saturating_sub(1);
+            }
+            (KeyCode::Up, KeyModifiers::NONE) | (KeyCode::Char('p'), KeyModifiers::CONTROL)
+                if self.completion_mode() =>
+            {
+                self.selected_completion = self
+                    .selected_completion
+                    .saturating_sub(self.completions_per_line);
+            }
+            (KeyCode::Down, KeyModifiers::NONE) | (KeyCode::Char('n'), KeyModifiers::CONTROL)
+                if self.completion_mode() =>
+            {
+                self.selected_completion = min(
+                    self.selected_completion + self.completions_per_line,
+                    self.filtered_completions.len().saturating_sub(1),
+                );
+            }
+            (KeyCode::Right, KeyModifiers::NONE) | (KeyCode::Tab, KeyModifiers::NONE)
+                if self.completion_mode() =>
+            {
+                if self.filtered_completions.is_empty() {
+                    self.clear_completions();
+                } else {
+                    self.selected_completion = min(
+                        self.selected_completion + 1,
+                        self.filtered_completions.len().saturating_sub(1),
+                    );
+                }
+            }
+            (KeyCode::Tab, KeyModifiers::NONE) => {
+                self.do_complete = true;
+            }
+            // misc
             (KeyCode::Backspace, KeyModifiers::NONE) => {
                 self.input.backspace();
             }
@@ -153,6 +457,12 @@ impl SmashState {
                     self.input.delete();
                 }
             }
+            (KeyCode::Left, KeyModifiers::NONE) => {
+                self.input.move_by(-1);
+            }
+            (KeyCode::Right, KeyModifiers::NONE) => {
+                self.input.move_by(1);
+            }
             (KeyCode::Char(ch), KeyModifiers::NONE) => {
                 self.input.insert(ch);
             }
@@ -163,6 +473,8 @@ impl SmashState {
         }
 
         if needs_redraw {
+            self.reparse_input_ctx();
+            self.filter_completion_entries();
             self.print_user_input();
         }
     }
@@ -170,6 +482,7 @@ impl SmashState {
     pub fn render_prompt(&mut self) {
         let screen_size = terminal::size().unwrap();
         self.columns = screen_size.0 as usize;
+        self.lines = screen_size.1 as usize;
 
         tracing::debug!(?self.columns);
 
@@ -217,7 +530,7 @@ impl SmashState {
 
     fn run_command(&mut self) {
         self.print_user_input();
-        // self.hide_completions();
+        self.hide_completions();
 
         print!("\r\n");
         disable_raw_mode().ok();
@@ -235,7 +548,7 @@ impl SmashState {
             self.input.insert_str(&input);
         }
 
-        // self.reparse_input_ctx();
+        self.reparse_input_ctx();
         self.render_prompt();
         self.print_user_input();
     }
@@ -307,91 +620,94 @@ impl SmashState {
         // let input_height = current_x / self.columns + notification_height;
         let input_height = current_x / self.columns;
 
-        let mut comps_height = 0;
-        // if self.completion_mode() {
-        //     // Determine the number of columns and its width of completions.
-        //     let mut longest = 0;
-        //     for (_, comp) in self.completions.iter() {
-        //         longest = max(longest, comp.len() + 1);
-        //     }
+        let mut completions_height = 0;
+        if self.completion_mode() {
+            // Determine the number of columns and its width of completions.
+            let mut longest = 0;
+            for comp in self.completions.iter() {
+                longest = max(longest, comp.len() + 1);
+            }
 
-        //     let num_columns = max(1, self.columns / longest);
-        //     let column_width = self.columns / num_columns;
+            let num_columns = max(1, self.columns / longest);
+            let column_width = self.columns / num_columns;
 
-        //     // Move `self.comps_show_from`.
-        //     let comps_height_max = self.lines - input_height - 1;
-        //     let num_comps_max = (comps_height_max - 1) * num_columns;
-        //     if self.comp_selected < self.comps_show_from {
-        //         self.comps_show_from = (self.comp_selected / num_columns) * num_columns;
-        //     }
+            // Move `self.completions_show_from`.
+            let completions_height_max = self.lines - input_height - 1;
+            let num_comps_max = (completions_height_max - 1) * num_columns;
+            if self.selected_completion < self.completions_show_from {
+                self.completions_show_from = (self.selected_completion / num_columns) * num_columns;
+            }
 
-        //     if self.comp_selected >= self.comps_show_from + num_comps_max {
-        //         self.comps_show_from =
-        //             (self.comp_selected / num_columns + 1) * num_columns - num_comps_max;
-        //     }
+            if self.selected_completion >= self.completions_show_from + num_comps_max {
+                self.completions_show_from =
+                    (self.selected_completion / num_columns + 1) * num_columns - num_comps_max;
+            }
 
-        //     // Print completions.
-        //     let mut remaining = self.comps_filtered.len() - self.comps_show_from;
-        //     let iter = self.comps_filtered.iter().skip(self.comps_show_from);
-        //     for (i, (color, comp)) in iter.enumerate() {
-        //         if i % num_columns == 0 {
-        //             if comps_height == comps_height_max - 1 {
-        //                 break;
-        //             }
+            // Print completions.
+            let mut remaining = self.filtered_completions.len() - self.completions_show_from;
+            let iter = self
+                .filtered_completions
+                .iter()
+                .skip(self.completions_show_from);
+            for (i, comp) in iter.enumerate() {
+                if i % num_columns == 0 {
+                    if completions_height == completions_height_max - 1 {
+                        break;
+                    }
 
-        //             queue!(stdout, Print("\r\n")).ok();
-        //             comps_height += 1;
-        //         }
+                    queue!(stdout, Print("\r\n")).ok();
+                    completions_height += 1;
+                }
 
-        //         let margin = column_width - min(comp.len(), column_width);
-        //         if self.comps_show_from + i == self.comp_selected {
-        //             queue!(
-        //                 stdout,
-        //                 SetAttribute(Attribute::Reverse),
-        //                 Print(truncate(comp, self.columns)),
-        //                 SetAttribute(Attribute::NoReverse),
-        //                 cursor::MoveRight(margin as u16),
-        //             )
-        //             .ok();
-        //         } else {
-        //             if let Some(ThemeColor::DirColor) = color {
-        //                 self.dircolor.write(&mut stdout, Path::new(comp)).ok();
-        //             }
+                let margin = column_width - min(comp.len(), column_width);
+                if self.completions_show_from + i == self.selected_completion {
+                    queue!(
+                        stdout,
+                        SetAttribute(Attribute::Reverse),
+                        Print(truncate(comp, self.columns)),
+                        SetAttribute(Attribute::NoReverse),
+                        cursor::MoveRight(margin as u16),
+                    )
+                    .ok();
+                } else {
+                    // if let Some(ThemeColor::DirColor) = color {
+                    //     self.dircolor.write(&mut stdout, Path::new(comp)).ok();
+                    // }
 
-        //             queue!(
-        //                 stdout,
-        //                 Print(truncate(comp, self.columns)),
-        //                 SetAttribute(Attribute::Reset),
-        //                 cursor::MoveRight(margin as u16)
-        //             )
-        //             .ok();
-        //         }
+                    queue!(
+                        stdout,
+                        Print(truncate(comp, self.columns)),
+                        SetAttribute(Attribute::Reset),
+                        cursor::MoveRight(margin as u16)
+                    )
+                    .ok();
+                }
 
-        //         remaining -= 1;
-        //     }
+                remaining -= 1;
+            }
 
-        //     if remaining > 0 {
-        //         comps_height += 2;
-        //         queue!(
-        //             stdout,
-        //             Clear(ClearType::UntilNewLine),
-        //             Print("\r\n"),
-        //             SetAttribute(Attribute::Reverse),
-        //             Print(" "),
-        //             Print(remaining),
-        //             Print(" more "),
-        //             SetAttribute(Attribute::Reset),
-        //         )
-        //         .ok();
-        //     }
+            if remaining > 0 {
+                completions_height += 2;
+                queue!(
+                    stdout,
+                    Clear(ClearType::UntilNewLine),
+                    Print("\r\n"),
+                    SetAttribute(Attribute::Reverse),
+                    Print(" "),
+                    Print(remaining),
+                    Print(" more "),
+                    SetAttribute(Attribute::Reset),
+                )
+                .ok();
+            }
 
-        //     self.comps_per_line = num_columns;
-        // }
+            self.completions_per_line = num_columns;
+        }
 
         // Move the cursor to the correct position.
         let cursor_y = (self.prompt_len + self.input.cursor()) / self.columns;
         let cursor_x = (self.prompt_len + self.input.cursor()) % self.columns;
-        let cursor_y_diff = (input_height - cursor_y) + comps_height;
+        let cursor_y_diff = (input_height - cursor_y) + completions_height;
         if cursor_y_diff > 0 {
             queue!(stdout, cursor::MoveUp(cursor_y_diff as u16),).ok();
         }
@@ -403,8 +719,81 @@ impl SmashState {
 
         queue!(stdout, cursor::Show).ok();
         self.clear_above = cursor_y;
-        self.clear_below = input_height - cursor_y + comps_height;
-        // self.comps_height = comps_height;
+        self.clear_below = input_height - cursor_y + completions_height;
+        self.completions_height = completions_height;
         stdout.flush().ok();
+    }
+}
+
+fn path_completion(pattern: &str, only_dirs: bool) -> Vec<String> {
+    let home_dir = dirs::home_dir().unwrap();
+    let current_dir = std::env::current_dir().unwrap();
+    let mut dir = if pattern.is_empty() {
+        current_dir.clone()
+    } else if let Some(pattern) = pattern.strip_prefix('~') {
+        home_dir.join(&pattern.trim_start_matches('/'))
+    } else {
+        PathBuf::from(pattern)
+    };
+
+    // "/usr/loca" -> "/usr"
+    dir = if dir.is_dir() {
+        dir
+    } else {
+        dir.pop();
+        if dir.to_str().unwrap().is_empty() {
+            current_dir.clone()
+        } else {
+            dir
+        }
+    };
+
+    debug!(
+        "path_completion: dir={}, pattern='{}', only_dirs={}",
+        dir.display(),
+        pattern,
+        only_dirs
+    );
+    match std::fs::read_dir(&dir) {
+        Ok(files) => {
+            let mut entries = Vec::new();
+            for file in files {
+                let file = file.unwrap();
+                if only_dirs && !file.file_type().unwrap().is_dir() {
+                    continue;
+                }
+
+                let path = file.path();
+
+                // Ignore dotfiles unless the pattern contains ".".
+                if !pattern.starts_with('.') && !pattern.contains("/.") {
+                    if let Some(filename) = path.file_name() {
+                        if let Some(filename) = filename.to_str() {
+                            if filename.starts_with('.') {
+                                continue;
+                            }
+                        }
+                    }
+                }
+
+                let (prefix, relpath) = if pattern.starts_with('~') {
+                    ("~/", path.strip_prefix(&home_dir).unwrap())
+                } else if pattern.starts_with('/') {
+                    ("/", path.strip_prefix("/").unwrap())
+                } else {
+                    ("", path.strip_prefix(&current_dir).unwrap_or(&path))
+                };
+
+                let comp = format!("{}{}", prefix, relpath.to_str().unwrap());
+                entries.push(comp);
+            }
+
+            entries.sort();
+            entries
+        }
+        Err(err) => {
+            debug!("failed to readdir '{}': {}", dir.display(), err);
+            vec![]
+        }
     }
 }

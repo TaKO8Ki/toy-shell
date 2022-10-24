@@ -1,14 +1,26 @@
 use crate::shell::Shell;
 
-use nix::sys::signal::{kill, sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal};
 use nix::sys::termios::{tcgetattr, tcsetattr, SetArg::TCSADRAIN, Termios};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
-use nix::unistd::{close, dup2, execv, fork, getpid, setpgid, tcsetpgrp, ForkResult, Pid};
+use nix::unistd::{tcsetpgrp, Pid};
 use std::cell::RefCell;
-use std::collections::HashSet;
 use std::fmt;
+use std::os::unix::io::RawFd;
 use std::rc::Rc;
 use tracing::debug;
+
+/// The process execution environment.
+#[derive(Debug, Copy, Clone)]
+pub struct Context {
+    pub stdin: RawFd,
+    pub stdout: RawFd,
+    pub stderr: RawFd,
+    pub pgid: Option<Pid>,
+    /// The process should be executed in background.
+    pub background: bool,
+    /// Is the shell interactive?
+    pub interactive: bool,
+}
 
 /// The exit status or reason why the command exited.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
