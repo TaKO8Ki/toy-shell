@@ -15,6 +15,7 @@ mod context_parser;
 mod eval;
 mod event;
 mod expand;
+mod highlight;
 mod parser;
 mod path;
 mod process;

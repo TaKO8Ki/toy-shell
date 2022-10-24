@@ -1,4 +1,5 @@
 use crate::context_parser::{self, InputContext};
+use crate::highlight::highlight;
 use crossterm::cursor::{self, MoveTo};
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::style::{Attribute, Color, Print, SetAttribute, SetForegroundColor};
@@ -130,6 +131,14 @@ impl UserInput {
             self.cursor = min(self.len(), self.cursor + offset.abs() as usize);
         }
     }
+
+    pub fn move_to_begin(&mut self) {
+        self.cursor = 0;
+    }
+
+    pub fn move_to_end(&mut self) {
+        self.cursor = self.len();
+    }
 }
 
 pub struct SmashState {
@@ -260,7 +269,7 @@ impl SmashState {
                     tx.send(Event::Completion(comps)).ok();
                 } else {
                     let pattern = self.current_span_text().unwrap_or("");
-                    let entries = path_completion(pattern, false);
+                    let entries = path_completion(pattern, self.input_ctx.words[0] == "cd");
                     tx.send(Event::Completion(entries)).ok();
                 }
 
@@ -445,6 +454,14 @@ impl SmashState {
                 self.run_command();
                 needs_redraw = false;
             }
+            (KeyCode::Char('a'), KeyModifiers::CONTROL) => {
+                self.clear_completions();
+                self.input.move_to_begin();
+            }
+            (KeyCode::Char('e'), KeyModifiers::CONTROL) => {
+                self.clear_completions();
+                self.input.move_to_end();
+            }
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 execute!(std::io::stdout(), Print("\r\n")).ok();
                 self.render_prompt();
@@ -585,13 +602,13 @@ impl SmashState {
         }
 
         // Print the highlighted input.
-        // let h = highlight::highlight(&self.input_ctx, &mut self.shell);
+        let h = highlight(&self.input_ctx, &mut self.shell);
         queue!(
             stdout,
             Print("\r"),
             cursor::MoveRight(self.prompt_len as u16),
             Clear(ClearType::UntilNewLine),
-            Print(self.input.input.replace("\n", "\r\n"))
+            Print(h.replace("\n", "\r\n"))
         )
         .ok();
 

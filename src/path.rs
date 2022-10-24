@@ -25,6 +25,10 @@ impl PathTable {
         self.table.clone().into_keys().collect()
     }
 
+    pub fn contains(&self, cmd: &str) -> bool {
+        self.table.contains_key(cmd)
+    }
+
     pub fn rehash(&mut self) {
         self.table.clear();
         for bin_dir in self.path.split(':').rev() {
