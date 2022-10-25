@@ -1,8 +1,12 @@
+use crate::eval::eval_in_subshell;
 use crate::parser::ExpansionOp;
 use crate::parser::Span;
 use crate::parser::Word;
 use crate::shell::Shell;
 
+use std::fs::File;
+use std::io::Read;
+use std::os::unix::io::FromRawFd;
 use tracing::debug;
 
 pub fn expand_words(shell: &mut Shell, words: &[Word]) -> anyhow::Result<Vec<String>> {
@@ -46,6 +50,22 @@ pub fn expand_word_into_vec(
             Span::Tilde(_) => {
                 let dir = dirs::home_dir().unwrap().to_str().unwrap().to_owned();
                 (vec![dir], false)
+            }
+            Span::Command { body, quoted } => {
+                let (_, stdout) = eval_in_subshell(shell, body)?;
+
+                let mut raw_stdout = Vec::new();
+                unsafe { File::from_raw_fd(stdout).read_to_end(&mut raw_stdout).ok() };
+
+                let output = std::str::from_utf8(&raw_stdout)
+                    .map_err(|err| {
+                        smash_err!("binary in variable/expansion is not supported");
+                        err
+                    })?
+                    .trim_end_matches('\n')
+                    .to_owned();
+
+                (vec![output], !quoted)
             }
         };
 

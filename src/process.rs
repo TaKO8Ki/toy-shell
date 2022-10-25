@@ -1,9 +1,13 @@
+use crate::builtins::{BuiltinCommandContext, BuiltinCommandError};
+use crate::parser;
 use crate::shell::Shell;
 
+use nix::sys::signal::{kill, sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal};
 use nix::sys::termios::{tcgetattr, tcsetattr, SetArg::TCSADRAIN, Termios};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
-use nix::unistd::{tcsetpgrp, Pid};
+use nix::unistd::{close, execv, fork, getpid, pipe, setpgid, tcsetpgrp, ForkResult, Pid};
 use std::cell::RefCell;
+use std::ffi::CString;
 use std::fmt;
 use std::os::unix::io::RawFd;
 use std::rc::Rc;
@@ -116,9 +120,11 @@ pub enum ProcessState {
 }
 
 pub fn run_in_foreground(shell: &mut Shell, job: &Rc<Job>, sigcont: bool) -> ProcessState {
+    debug!("foreeeeeeeeeeeeeeee");
     shell.last_fore_job = Some(job.clone());
     // shell.background_jobs_mut().remove(job);
     set_terminal_process_group(job.pgid);
+    debug!("foreeeeeeeeeeeeeeee");
 
     // if sigcont {
     //     if let Some(ref termios) = *job.termios.borrow() {
@@ -142,11 +148,11 @@ pub fn run_in_foreground(shell: &mut Shell, job: &Rc<Job>, sigcont: bool) -> Pro
     status
 }
 
-fn set_terminal_process_group(pgid: Pid) {
+pub fn set_terminal_process_group(pgid: Pid) {
     tcsetpgrp(0, pgid).expect("failed to tcsetpgrp");
 }
 
-fn restore_terminal_attrs(termios: &Termios) {
+pub fn restore_terminal_attrs(termios: &Termios) {
     tcsetattr(0, TCSADRAIN, termios).expect("failed to tcsetattr");
 }
 
@@ -228,6 +234,172 @@ pub fn destroy_job(shell: &mut Shell, job: &Rc<Job>) {
     if let Some(ref last_job) = shell.last_fore_job {
         if job.id == last_job.id {
             shell.last_fore_job = None;
+        }
+    }
+}
+
+pub fn wait_child(pid: Pid) -> anyhow::Result<i32> {
+    let wait_status = waitpid(pid, None)?;
+    match wait_status {
+        WaitStatus::Exited(_, status) => Ok(status),
+        // TODO: Handle errors.
+        _ => {
+            let err = anyhow::anyhow!("waitpid returned an unexpected value: {:?}", wait_status);
+
+            debug!("waitpid: {}", err);
+            Err(err)
+        }
+    }
+}
+
+pub fn run_internal_command(
+    shell: &mut Shell,
+    argv: &[String],
+    mut stdin: RawFd,
+    mut stdout: RawFd,
+    mut stderr: RawFd,
+    redirects: &[parser::Redirection],
+) -> anyhow::Result<ExitStatus> {
+    let command = match crate::builtins::builtin_command(argv[0].as_str()) {
+        Some(func) => func,
+        _ => return Err(BuiltinCommandError::NotFound.into()),
+    };
+    let result = command.run(BuiltinCommandContext { argv, shell });
+
+    // TODO: support redirections
+
+    Ok(result)
+}
+
+pub fn run_external_command(
+    shell: &mut Shell,
+    ctx: &Context,
+    argv: Vec<String>,
+    redirects: &[parser::Redirection],
+    assignments: &[parser::Assignment],
+) -> anyhow::Result<ExitStatus> {
+    // let mut fds = Vec::new();
+    // for r in redirects {
+    //     match r.target {
+    //         parser::RedirectionType::File(ref wfilepath) => {
+    //             let mut options = OpenOptions::new();
+    //             match &r.direction {
+    //                 parser::RedirectionDirection::Input => {
+    //                     options.read(true);
+    //                 }
+    //                 parser::RedirectionDirection::Output => {
+    //                     options.write(true).create(true);
+    //                 }
+    //                 parser::RedirectionDirection::Append => {
+    //                     options.write(true).append(true);
+    //                 }
+    //             };
+
+    //             debug!("redirection: options={:?}", options);
+    //             let filepath = expand_word_into_string(shell, wfilepath)?;
+    //             if let Ok(file) = options.open(&filepath) {
+    //                 fds.push((file.into_raw_fd(), r.fd as RawFd))
+    //             } else {
+    //                 debug!("failed to open file: `{}'", filepath);
+    //                 return Ok(ExitStatus::ExitedWith(1));
+    //             }
+    //         }
+    //     }
+    // }
+
+    let argv0 = if argv[0].starts_with('/') || argv[0].starts_with("./") {
+        CString::new(argv[0].as_str())?
+    } else {
+        match shell.path_table().lookup(&argv[0]) {
+            Some(path) => CString::new(path)?,
+            None => {
+                smash_err!("command not found `{}`", argv[0]);
+                return Ok(ExitStatus::ExitedWith(1));
+            }
+        }
+    };
+    // };
+
+    let mut args = Vec::new();
+    for arg in argv {
+        args.push(CString::new(arg)?);
+    }
+
+    // Spawn a child.
+    match unsafe { fork() }.expect("failed to fork") {
+        ForkResult::Parent { child } => Ok(ExitStatus::Running(child)),
+        ForkResult::Child => {
+            // Create or join a process group.
+            if ctx.interactive {
+                let pid = getpid();
+                let pgid = match ctx.pgid {
+                    Some(pgid) => {
+                        setpgid(pid, pgid).expect("failed to setpgid");
+                        pgid
+                    }
+                    None => {
+                        setpgid(pid, pid).expect("failed to setpgid");
+                        pid
+                    }
+                };
+
+                if !ctx.background {
+                    set_terminal_process_group(pgid);
+                    restore_terminal_attrs(shell.shell_termios.as_ref().unwrap());
+                }
+
+                // Accept job-control-related signals (refer https://www.gnu.org/software/libc/manual/html_node/Launching-Jobs.html)
+                let action = SigAction::new(SigHandler::SigDfl, SaFlags::empty(), SigSet::empty());
+                unsafe {
+                    sigaction(Signal::SIGINT, &action).expect("failed to sigaction");
+                    sigaction(Signal::SIGQUIT, &action).expect("failed to sigaction");
+                    sigaction(Signal::SIGTSTP, &action).expect("failed to sigaction");
+                    sigaction(Signal::SIGTTIN, &action).expect("failed to sigaction");
+                    sigaction(Signal::SIGTTOU, &action).expect("failed to sigaction");
+                    sigaction(Signal::SIGCHLD, &action).expect("failed to sigaction");
+                }
+            }
+
+            // Initialize stdin/stdout/stderr and redirections.
+            // for (src, dst) in fds {
+            //     move_fd(src, dst);
+            // }
+
+            // Set exported variables.
+            // for name in shell.exported_names() {
+            //     if let Some(var) = shell.get(name) {
+            //         std::env::set_var(name, var.as_str());
+            //     }
+            // }
+
+            // Load assignments.
+            // for assignment in assignments {
+            //     let value = evaluate_initializer(shell, &assignment.initializer)
+            //         .expect("failed to evaluate the initializer");
+            //     match value {
+            //         Value::String(s) => std::env::set_var(&assignment.name, s),
+            //         Value::Array(_) => {
+            //             eprintln!("Array assignments in a command is not supported.");
+            //             std::process::exit(1);
+            //         }
+            //         Value::Function(_) => (),
+            //     }
+            // }
+
+            let args: Vec<&std::ffi::CStr> = args.iter().map(|s| s.as_c_str()).collect();
+            match execv(&argv0, &args) {
+                Ok(_) => {
+                    unreachable!();
+                }
+                Err(nix::errno::Errno::EACCES) => {
+                    eprintln!("Failed to exec {:?} (EACCESS). chmod(1) may help.", argv0);
+                    std::process::exit(1);
+                }
+                Err(err) => {
+                    eprintln!("Failed to exec {:?} ({})", argv0, err);
+                    std::process::exit(1);
+                }
+            }
         }
     }
 }

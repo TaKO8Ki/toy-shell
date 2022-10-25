@@ -137,6 +137,11 @@ pub enum Span {
         quoted: bool,
     },
     Tilde(Option<String>),
+    // $(echo hello && echo world)
+    Command {
+        body: Vec<Term>,
+        quoted: bool,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -473,7 +478,8 @@ fn visit_escaped_word(pair: Pair<Rule>, literal_chars: bool) -> Word {
                             )));
                         }
                         Rule::param_span => spans.push(visit_param_span(span_in_quote, true)),
-                        _ => unreachable!(),
+                        Rule::command_span => spans.push(visit_command_span(span_in_quote, true)),
+                        rule => unreachable!("{:?}", rule),
                     }
                 }
             }
@@ -550,8 +556,7 @@ fn visit_assignment(pair: Pair<Rule>) -> Assignment {
             }
         }
         Rule::array_initializer => {
-            let word =
-                Initializer::Array(initializer.into_inner().map(|p| visit_word(p)).collect());
+            let word = Initializer::Array(initializer.into_inner().map(visit_word).collect());
             let index = None;
             Assignment {
                 name,
@@ -612,6 +617,11 @@ fn visit_assign_expr(pair: Pair<Rule>) -> Expr {
         }
         _ => todo!(),
     }
+}
+
+fn visit_command_span(pair: Pair<Rule>, quoted: bool) -> Span {
+    let body = visit_compound_list(pair.into_inner().next().unwrap());
+    Span::Command { body, quoted }
 }
 
 #[cfg(test)]

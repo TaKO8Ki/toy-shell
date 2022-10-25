@@ -3,10 +3,7 @@ use crate::highlight::highlight;
 use crossterm::cursor::{self, MoveTo};
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::style::{Attribute, Color, Print, SetAttribute, SetForegroundColor};
-use crossterm::terminal::{
-    self, disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen,
-    LeaveAlternateScreen,
-};
+use crossterm::terminal::{self, disable_raw_mode, enable_raw_mode, Clear, ClearType};
 use crossterm::{execute, queue};
 use nix::sys::signal::{sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal};
 use signal_hook::{self, iterator::Signals};
@@ -58,6 +55,10 @@ impl UserInput {
 
     pub fn len(&self) -> usize {
         self.indices.len()
+    }
+
+    pub fn nth(&self, index: usize) -> Option<char> {
+        self.input.chars().nth(index)
     }
 
     pub fn cursor(&self) -> usize {
@@ -145,6 +146,55 @@ impl UserInput {
 
     pub fn move_to_end(&mut self) {
         self.cursor = self.len();
+    }
+
+    pub fn move_to_next_word(&mut self) {
+        // Skip the whitespace at the current position.
+        self.cursor += 1;
+        if self.cursor > self.input.len() {
+            self.cursor = self.input.len();
+        }
+
+        while self.cursor < self.input.len() {
+            if let Some(prev_ch) = self.nth(self.cursor.saturating_sub(1)) {
+                match self.nth(self.cursor) {
+                    Some(ch)
+                        if self.word_split.contains(prev_ch) && !self.word_split.contains(ch) =>
+                    {
+                        break
+                    }
+                    Some(_) => (),
+                    _ => break,
+                }
+            } else {
+                break;
+            }
+
+            self.cursor += 1;
+        }
+    }
+
+    pub fn move_to_prev_word(&mut self) {
+        // Skip the whitespace at the current position.
+        self.cursor = self.cursor.saturating_sub(1);
+
+        while self.cursor > 0 {
+            if let Some(next_ch) = self.nth(self.cursor.saturating_sub(1)) {
+                match self.nth(self.cursor) {
+                    Some(ch)
+                        if self.word_split.contains(next_ch) && !self.word_split.contains(ch) =>
+                    {
+                        break
+                    }
+                    Some(_) => (),
+                    _ => break,
+                }
+            } else {
+                break;
+            }
+
+            self.cursor -= 1;
+        }
     }
 }
 
@@ -471,18 +521,7 @@ impl SmashState {
                     self.input.reset(line);
                 }
             }
-            // misc
-            (KeyCode::Backspace, KeyModifiers::NONE) => {
-                self.input.backspace();
-                self.history_selector.clear_similary_named_history();
-            }
-            (KeyCode::Enter, KeyModifiers::NONE) => {
-                debug!("enter");
-                let mut stdout = std::io::stdout();
-                execute!(stdout, Clear(ClearType::UntilNewLine)).ok();
-                self.run_command();
-                needs_redraw = false;
-            }
+            // cursor
             (KeyCode::Char('a'), KeyModifiers::CONTROL) => {
                 self.clear_completions();
                 self.input.move_to_begin();
@@ -506,6 +545,14 @@ impl SmashState {
                     self.input.delete();
                 }
             }
+            (KeyCode::Char('f'), KeyModifiers::ALT) => {
+                self.clear_completions();
+                self.input.move_to_next_word();
+            }
+            (KeyCode::Char('b'), KeyModifiers::ALT) => {
+                self.clear_completions();
+                self.input.move_to_prev_word();
+            }
             (KeyCode::Left, KeyModifiers::NONE) => {
                 self.input.move_by(-1);
             }
@@ -522,6 +569,18 @@ impl SmashState {
                         self.input.move_by(1);
                     }
                 }
+            }
+            // misc
+            (KeyCode::Enter, KeyModifiers::NONE) => {
+                debug!("enter");
+                let mut stdout = std::io::stdout();
+                execute!(stdout, Clear(ClearType::UntilNewLine)).ok();
+                self.run_command();
+                needs_redraw = false;
+            }
+            (KeyCode::Backspace, KeyModifiers::NONE) => {
+                self.input.backspace();
+                self.history_selector.clear_similary_named_history();
             }
             (KeyCode::Char(ch), KeyModifiers::NONE) => {
                 debug!(

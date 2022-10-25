@@ -4,6 +4,8 @@ use crate::ExitStatus;
 use thiserror::Error;
 
 mod cd;
+mod echo;
+mod eval;
 mod exit;
 mod export;
 mod source;
@@ -26,6 +28,7 @@ pub enum BuiltinCommandError {
 pub fn builtin_command(name: &str) -> Option<Box<dyn BuiltinCommand>> {
     match name {
         "cd" => Some(Box::new(cd::Cd)),
+        "eval" => Some(Box::new(eval::Eval)),
         "exit" => Some(Box::new(exit::Exit)),
         "export" => Some(Box::new(export::Export)),
         "source" => Some(Box::new(source::Source)),
