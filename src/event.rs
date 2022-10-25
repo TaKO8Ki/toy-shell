@@ -168,10 +168,6 @@ pub struct SmashState {
     lines: usize,
     // history
     history_selector: HistorySelector,
-    history_selected: usize,
-    history_display_len: usize,
-    history_input_max: usize,
-    history_entries: Vec<String>,
 }
 
 impl Drop for SmashState {
@@ -200,10 +196,6 @@ impl SmashState {
             completions_height: 0,
             completions_per_line: 0,
             lines: 0,
-            history_selected: 0,
-            history_display_len: 0,
-            history_input_max: 0,
-            history_entries: Vec::new(),
             history_selector: HistorySelector::new(),
         }
     }
@@ -474,6 +466,7 @@ impl SmashState {
             }
             (KeyCode::Down, KeyModifiers::NONE) => {
                 self.history_selector.next();
+                debug!(?self.input, "down");
                 if let Some(line) = self.history_selector.current(self.shell.history()) {
                     self.input.reset(line);
                 }
@@ -481,8 +474,12 @@ impl SmashState {
             // misc
             (KeyCode::Backspace, KeyModifiers::NONE) => {
                 self.input.backspace();
+                self.history_selector.clear_similary_named_history();
             }
             (KeyCode::Enter, KeyModifiers::NONE) => {
+                debug!("enter");
+                let mut stdout = std::io::stdout();
+                execute!(stdout, Clear(ClearType::UntilNewLine)).ok();
                 self.run_command();
                 needs_redraw = false;
             }
@@ -495,9 +492,12 @@ impl SmashState {
                 self.input.move_to_end();
             }
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                execute!(std::io::stdout(), Print("\r\n")).ok();
+                let mut stdout = std::io::stdout();
+                execute!(stdout, Clear(ClearType::UntilNewLine)).ok();
+                execute!(stdout, Print("\r\n")).ok();
                 self.render_prompt();
                 self.input.clear();
+                self.history_selector.clear_similary_named_history();
             }
             (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
                 if self.input.is_empty() {
@@ -510,10 +510,28 @@ impl SmashState {
                 self.input.move_by(-1);
             }
             (KeyCode::Right, KeyModifiers::NONE) => {
-                self.input.move_by(1);
+                match self
+                    .history_selector
+                    .similary_named_history(self.shell.history())
+                {
+                    Some(history) => {
+                        self.input.reset(history);
+                        self.history_selector.reset();
+                    }
+                    None => {
+                        self.input.move_by(1);
+                    }
+                }
             }
             (KeyCode::Char(ch), KeyModifiers::NONE) => {
+                debug!(
+                    "history={:?}",
+                    self.history_selector
+                        .similary_named_history(self.shell.history())
+                );
                 self.input.insert(ch);
+                self.history_selector
+                    .set_similary_named_history(self.shell.history(), self.input.as_str());
             }
             (KeyCode::Char(ch), KeyModifiers::SHIFT) => {
                 self.input.insert(ch);
@@ -578,18 +596,19 @@ impl SmashState {
     }
 
     fn run_command(&mut self) {
+        self.history_selector.clear_similary_named_history();
+        self.history_selector.reset();
+
         self.print_user_input();
         self.hide_completions();
 
-        print!("\r\n");
+        execute!(std::io::stdout(), Print("\r\n")).ok();
         disable_raw_mode().ok();
         self.shell.run_str(self.input.as_str());
         enable_raw_mode().ok();
-        // check_background_jobs(&mut self.shell);
 
         self.shell.history_mut().append(self.input.as_str());
         self.input.clear();
-        self.history_selector.reset();
         self.clear_above = 0;
         self.clear_below = 0;
 
@@ -600,6 +619,12 @@ impl SmashState {
         self.reparse_input_ctx();
         self.render_prompt();
         self.print_user_input();
+
+        debug!(
+            "history={:?}",
+            self.history_selector
+                .similary_named_history(&self.shell.history())
+        );
     }
 
     fn print_user_input(&mut self) {
@@ -643,6 +668,20 @@ impl SmashState {
             Print(h.replace("\n", "\r\n"))
         )
         .ok();
+
+        // Print the first history item;
+        if let Some(history) = self.similary_named_history() {
+            debug!(?history, ?self.input_ctx.input);
+            if let Some(suffix) = history.strip_prefix(&self.input_ctx.input) {
+                queue!(
+                    stdout,
+                    SetForegroundColor(Color::DarkGrey),
+                    Print(suffix),
+                    SetAttribute(Attribute::Reset),
+                )
+                .ok();
+            }
+        }
 
         // Handle the case when the cursor is at the end of a line.
         let current_x = self.prompt_len + self.input.len();
@@ -771,6 +810,11 @@ impl SmashState {
         self.clear_below = input_height - cursor_y + completions_height;
         self.completions_height = completions_height;
         stdout.flush().ok();
+    }
+
+    pub fn similary_named_history(&self) -> Option<String> {
+        self.history_selector
+            .similary_named_history(self.shell.history())
     }
 }
 

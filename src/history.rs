@@ -30,7 +30,7 @@ impl History {
                         }
                         (_, _, false) => {
                             smash_err!(
-                                "nsh: warning: failed to parse ~/.nsh_history: at line {}",
+                                "smash: warning: failed to parse ~/.smash_history: at line {}",
                                 i + 1
                             );
                             warned = true;
@@ -115,6 +115,7 @@ impl History {
 
 pub struct HistorySelector {
     offset: usize,
+    similary_named_offset: Option<usize>,
     input: String,
 }
 
@@ -122,6 +123,7 @@ impl HistorySelector {
     pub fn new() -> HistorySelector {
         HistorySelector {
             offset: 0,
+            similary_named_offset: None,
             input: String::new(),
         }
     }
@@ -142,17 +144,46 @@ impl HistorySelector {
         }
     }
 
+    pub fn similary_named_history(&self, history: &History) -> Option<String> {
+        debug!(?self.similary_named_offset);
+        self.similary_named_offset.and_then(|offset| {
+            history
+                .history
+                .get(history.len() - (offset - 1) - 1)
+                .map(|s| s.to_owned())
+        })
+    }
+
+    pub fn set_similary_named_history<'a>(&mut self, history: &'a History, input: &'a str) {
+        self.similary_named_offset = history
+            .history
+            .iter()
+            .position(|h| h != input && h.starts_with(input))
+            .map(|offset| history.len() - offset);
+        debug!(?self.similary_named_offset, ?input);
+    }
+
+    pub fn clear_similary_named_history(&mut self) {
+        self.similary_named_offset = None;
+    }
+
     /// Selects the previous history entry. Save the current user (not yet executed)
     /// input if needed.
     pub fn prev(&mut self, history: &History, input: &str) {
-        // Entering the history selection. Save the current state.state.
-        self.input = input.to_string();
+        debug!(?self.offset);
+        if self.offset == 0 {
+            // Entering the history selection. Save the current state.state.
+            self.input = input.to_string();
+        }
+
         let hist_len = history.len();
-        if !self.input.is_empty() {
-            if let Some(offset) = history.history.iter().position(|h| h.starts_with(input)) {
-                debug!(?offset, ?input);
-                self.offset = hist_len - offset;
-            }
+        if let Some(offset) = history
+            .history
+            .iter()
+            .position(|h| !input.is_empty() && h != input && h.starts_with(input))
+        {
+            debug!(?offset, ?input);
+            self.offset = hist_len - offset;
         } else {
             self.offset += 1;
         }
