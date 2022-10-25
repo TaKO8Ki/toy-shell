@@ -1,0 +1,3 @@
+name = { (ASCII_ALPHANUMERIC | OTHER_PUNCTUATION | "_" | "-")+ }
+body = { "\""? ~ (!"\"" ~ ANY)+ ~ "~\""? }
+alias = { SOI ~ name ~ "=" ~ body ~ EOI }

@@ -45,6 +45,8 @@ pub struct Shell {
 
     exported: HashSet<String>,
 
+    aliases: HashMap<String, String>,
+
     history: History,
 }
 
@@ -68,6 +70,7 @@ impl Shell {
             frames: Vec::new(),
             global: Frame::new(),
             exported: HashSet::new(),
+            aliases: HashMap::new(),
             history: History::new(history_path),
         }
     }
@@ -254,6 +257,22 @@ impl Shell {
 
     pub fn exported_names(&self) -> std::collections::hash_set::Iter<String> {
         self.exported.iter()
+    }
+
+    pub fn aliases(&self) -> std::collections::hash_map::Iter<String, String> {
+        self.aliases.iter()
+    }
+
+    pub fn add_alias(&mut self, name: &str, body: String) {
+        self.aliases.insert(name.to_string(), body);
+    }
+
+    pub fn lookup_alias(&self, alias: &str) -> Option<String> {
+        self.aliases.get(&alias.to_string()).cloned()
+    }
+
+    pub fn has_lookup_alias(&self, alias: &str) -> bool {
+        self.aliases.contains_key(&alias.to_string())
     }
 
     pub fn export(&mut self, name: &str) {

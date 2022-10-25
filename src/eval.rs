@@ -6,6 +6,7 @@ use crate::process::{
     run_external_command, run_in_foreground, run_internal_command, wait_child, wait_for_job,
     Context, ProcessState,
 };
+use crate::resolve::resolve_alias;
 use crate::shell::Shell;
 use crate::ExitStatus;
 
@@ -345,7 +346,7 @@ fn run_simple_command(
     assignments: &[parser::Assignment],
 ) -> anyhow::Result<ExitStatus> {
     // let argv = expand_words(shell, &expand_alias(shell, argv))?;
-    let argv = expand_words(shell, argv)?;
+    let argv = expand_words(shell, &resolve_alias(shell, argv))?;
     if argv.is_empty() {
         // `argv` is empty. For example bash accepts `> foo.txt`; it creates an empty file
         // named "foo.txt".

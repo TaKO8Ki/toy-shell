@@ -3,8 +3,8 @@ use crate::ExitStatus;
 
 use thiserror::Error;
 
+mod alias;
 mod cd;
-mod echo;
 mod eval;
 mod exit;
 mod export;
@@ -32,6 +32,7 @@ pub fn builtin_command(name: &str) -> Option<Box<dyn BuiltinCommand>> {
         "exit" => Some(Box::new(exit::Exit)),
         "export" => Some(Box::new(export::Export)),
         "source" => Some(Box::new(source::Source)),
+        "alias" => Some(Box::new(alias::Alias)),
         _ => None,
     }
 }

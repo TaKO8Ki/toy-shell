@@ -22,6 +22,7 @@ mod history;
 mod parser;
 mod path;
 mod process;
+mod resolve;
 mod shell;
 mod variable;
 

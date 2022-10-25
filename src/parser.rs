@@ -490,6 +490,16 @@ fn visit_escaped_word(pair: Pair<Rule>, literal_chars: bool) -> Word {
                     .map(|p| p.as_span().as_str().to_owned());
                 spans.push(Span::Tilde(username));
             }
+            Rule::single_quoted_span => {
+                for span_in_quote in span.into_inner() {
+                    match span_in_quote.as_rule() {
+                        Rule::literal_in_single_quoted_span => {
+                            spans.push(Span::Literal(span_in_quote.as_str().to_owned()));
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }
             _ => {
                 debug!(?span);
                 unimplemented!("span {:?}", span.as_rule());
