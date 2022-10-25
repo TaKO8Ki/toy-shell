@@ -23,7 +23,6 @@ pub enum Event {
     Input(TermEvent),
     ScreenResized,
     Completion(Vec<String>),
-    NoCompletion,
 }
 
 #[derive(Clone, Debug)]
@@ -441,9 +440,6 @@ impl SmashState {
                 let screen_size = terminal::size().unwrap();
                 self.columns = screen_size.0 as usize;
                 self.lines = screen_size.1 as usize;
-            }
-            Event::NoCompletion => {
-                todo!()
             }
             Event::Completion(comps) => {
                 if comps.is_empty() {

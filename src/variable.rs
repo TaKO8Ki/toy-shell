@@ -1,13 +1,11 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::parser;
-
 #[derive(Debug, Clone)]
 pub enum Value {
     String(String),
     Array(Vec<String>),
-    Function(parser::Command),
+    // TODO: support function
 }
 
 /// A shell variable.
@@ -30,8 +28,6 @@ impl Variable {
     pub fn as_str(&self) -> &str {
         match &self.value {
             Some(Value::String(value)) => value,
-            Some(Value::Function(_)) => "(function)",
-            // Bash returns the first element in the array.
             Some(Value::Array(elems)) => match elems.get(0) {
                 Some(elem) => elem.as_str(),
                 _ => "",

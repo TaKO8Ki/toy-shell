@@ -30,7 +30,6 @@ pub struct Shell {
     pub interactive: bool,
     path_table: PathTable,
     pub last_fore_job: Option<Rc<Job>>,
-    background_jobs: HashSet<Rc<Job>>,
     states: HashMap<Pid, ProcessState>,
     pub shell_pgid: Pid,
     pub shell_termios: Option<Termios>,
@@ -60,7 +59,6 @@ impl Shell {
             interactive: false,
             path_table: PathTable::new(),
             last_fore_job: None,
-            background_jobs: HashSet::new(),
             states: HashMap::new(),
             shell_pgid: getpid(),
             shell_termios: None,
@@ -160,10 +158,6 @@ impl Shell {
         }
     }
 
-    pub fn background_jobs_mut(&mut self) -> &mut HashSet<Rc<Job>> {
-        &mut self.background_jobs
-    }
-
     pub fn get_process_state(&self, pid: Pid) -> Option<&ProcessState> {
         self.states.get(&pid)
     }
@@ -227,27 +221,12 @@ impl Shell {
         self.frames.last().unwrap_or(&self.global)
     }
 
-    #[inline]
-    pub fn enter_frame(&mut self) {
-        self.frames.push(Frame::new());
-    }
-
     pub fn history(&self) -> &History {
         &self.history
     }
 
     pub fn history_mut(&mut self) -> &mut History {
         &mut self.history
-    }
-
-    #[inline]
-    pub fn leave_frame(&mut self) {
-        self.frames.pop();
-    }
-
-    #[inline]
-    pub fn in_global_frame(&self) -> bool {
-        self.frames.is_empty()
     }
 
     #[inline]

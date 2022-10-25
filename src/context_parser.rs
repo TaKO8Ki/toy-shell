@@ -3,7 +3,6 @@
 //! implement context-aware stuffs such as completion and syntax highlighting.
 use std::collections::VecDeque;
 use std::ops::Range;
-use tracing::debug;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum BlockType {

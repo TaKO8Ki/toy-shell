@@ -26,6 +26,11 @@ pub fn expand_words(shell: &mut Shell, words: &[Word]) -> anyhow::Result<Vec<Str
     Ok(evaluated)
 }
 
+pub fn expand_word_into_string(shell: &mut Shell, word: &Word) -> anyhow::Result<String> {
+    let ws: Vec<String> = expand_word_into_vec(shell, word, &shell.ifs())?;
+    Ok(ws.join(""))
+}
+
 pub fn expand_word_into_vec(
     shell: &mut Shell,
     word: &Word,
@@ -138,40 +143,9 @@ pub fn expand_param(
         //     return Ok(args.iter().map(|a| Some(a.to_owned())).collect());
         // }
         _ => {
-            debug!("aaaaaaaaaaaaaaaa: {:?}, {:?}", name, shell.get(name));
+            debug!("{:?}={:?}", name, shell.get(name));
             if let Some(var) = shell.get(name) {
-                // $<name> is defined.
-                let value = var.value();
-                match (op, value) {
-                    // (ExpansionOp::Length, Some(_)) => {
-                    //     return Ok(vec![Some(var.as_str().len().to_string())]);
-                    // }
-                    // (ExpansionOp::Length, None) => {
-                    //     return Ok(vec![Some(0.to_string())]);
-                    // }
-                    // (ExpansionOp::GetNullableOrDefaultAndAssign(_), None) => {
-                    //     return Ok(vec![None]);
-                    // }
-                    // (ExpansionOp::GetNullableOrDefault(_), None) => {
-                    //     return Ok(vec![None]);
-                    // }
-                    // (
-                    //     ExpansionOp::Subst {
-                    //         pattern,
-                    //         replacement,
-                    //         replace_all,
-                    //     },
-                    //     Some(_),
-                    // ) => {
-                    //     let content = var.as_str().to_string();
-                    //     let replaced =
-                    //         replace_pattern(shell, pattern, &content, replacement, *replace_all)?;
-                    //     return Ok(vec![Some(replaced)]);
-                    // }
-                    (_, _) => {
-                        return Ok(vec![Some(var.as_str().to_string())]);
-                    }
-                };
+                return Ok(vec![Some(var.as_str().to_string())]);
             }
         }
     }

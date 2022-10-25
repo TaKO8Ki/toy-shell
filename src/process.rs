@@ -1,11 +1,13 @@
 use crate::builtins::{BuiltinCommandContext, BuiltinCommandError};
+use crate::eval::evaluate_initializer;
 use crate::parser;
 use crate::shell::Shell;
+use crate::variable::Value;
 
-use nix::sys::signal::{kill, sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal};
+use nix::sys::signal::{sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal};
 use nix::sys::termios::{tcgetattr, tcsetattr, SetArg::TCSADRAIN, Termios};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
-use nix::unistd::{close, execv, fork, getpid, pipe, setpgid, tcsetpgrp, ForkResult, Pid};
+use nix::unistd::{execv, fork, getpid, pipe, setpgid, tcsetpgrp, ForkResult, Pid};
 use std::cell::RefCell;
 use std::ffi::CString;
 use std::fmt;
@@ -30,10 +32,7 @@ pub struct Context {
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum ExitStatus {
     ExitedWith(i32),
-    Running(Pid /* pgid */),
-    Break,
-    Continue,
-    Return,
+    Running(Pid),
     // The command is not executed because of `noexec`.
     NoExec,
 }
@@ -120,11 +119,9 @@ pub enum ProcessState {
 }
 
 pub fn run_in_foreground(shell: &mut Shell, job: &Rc<Job>, sigcont: bool) -> ProcessState {
-    debug!("foreeeeeeeeeeeeeeee");
+    debug!("run_in_foreground");
     shell.last_fore_job = Some(job.clone());
-    // shell.background_jobs_mut().remove(job);
     set_terminal_process_group(job.pgid);
-    debug!("foreeeeeeeeeeeeeeee");
 
     // if sigcont {
     //     if let Some(ref termios) = *job.termios.borrow() {
@@ -366,25 +363,24 @@ pub fn run_external_command(
             // }
 
             // Set exported variables.
-            // for name in shell.exported_names() {
-            //     if let Some(var) = shell.get(name) {
-            //         std::env::set_var(name, var.as_str());
-            //     }
-            // }
+            for name in shell.exported_names() {
+                if let Some(var) = shell.get(name) {
+                    std::env::set_var(name, var.as_str());
+                }
+            }
 
             // Load assignments.
-            // for assignment in assignments {
-            //     let value = evaluate_initializer(shell, &assignment.initializer)
-            //         .expect("failed to evaluate the initializer");
-            //     match value {
-            //         Value::String(s) => std::env::set_var(&assignment.name, s),
-            //         Value::Array(_) => {
-            //             eprintln!("Array assignments in a command is not supported.");
-            //             std::process::exit(1);
-            //         }
-            //         Value::Function(_) => (),
-            //     }
-            // }
+            for assignment in assignments {
+                let value = evaluate_initializer(shell, &assignment.initializer)
+                    .expect("failed to evaluate the initializer");
+                match value {
+                    Value::String(s) => std::env::set_var(&assignment.name, s),
+                    Value::Array(_) => {
+                        eprintln!("Array assignments in a command is not supported.");
+                        std::process::exit(1);
+                    }
+                }
+            }
 
             let args: Vec<&std::ffi::CStr> = args.iter().map(|s| s.as_c_str()).collect();
             match execv(&argv0, &args) {

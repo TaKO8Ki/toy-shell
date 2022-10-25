@@ -122,8 +122,9 @@ pub enum RedirectionType {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ExpansionOp {
-    Length,     // ${#parameter}
-    GetOrEmpty, // $parameter and ${parameter}
+    // $parameter and ${parameter}
+    GetOrEmpty,
+    // TODO: support other expansions
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -525,11 +526,11 @@ fn visit_command(pair: Pair<Rule>) -> Command {
         // Rule::break_command => Command::Break,
         // Rule::continue_command => Command::Continue,
         // Rule::return_command => visit_return_command(inner),
-        // Rule::assignment_command => visit_assignment_command(inner),
+        Rule::assignment_command => visit_assignment_command(inner),
         // Rule::local_definition => visit_local_definition(inner),
         // Rule::function_definition => visit_function_definition(inner),
         // Rule::cond_ex => visit_cond_ex(inner),
-        _ => unreachable!(),
+        _ => unimplemented!("rule {:?}", inner.as_rule()),
     }
 }
 
@@ -580,26 +581,23 @@ fn visit_expr(pair: Pair<Rule>) -> Expr {
 
     match pair.as_rule() {
         Rule::assign => visit_assign_expr(pair),
-        // Rule::arith => visit_arith_expr(pair),
-        // Rule::term => visit_term(pair),
-        // Rule::factor => visit_factor(pair),
-        // Rule::expr => {
-        //     let lhs = visit_assign_expr(first);
-        //     if let Some(op) = maybe_op {
-        //         let rhs = visit_expr(inner.next().unwrap());
-        //         match op.as_span().as_str() {
-        //             "==" => Expr::Eq(Box::new(lhs), Box::new(rhs)),
-        //             "!=" => Expr::Ne(Box::new(lhs), Box::new(rhs)),
-        //             ">" => Expr::Gt(Box::new(lhs), Box::new(rhs)),
-        //             ">=" => Expr::Ge(Box::new(lhs), Box::new(rhs)),
-        //             "<" => Expr::Lt(Box::new(lhs), Box::new(rhs)),
-        //             "<=" => Expr::Le(Box::new(lhs), Box::new(rhs)),
-        //             _ => unreachable!(),
-        //         }
-        //     } else {
-        //         lhs
-        //     }
-        // }
+        Rule::expr => {
+            let lhs = visit_assign_expr(first);
+            if let Some(op) = maybe_op {
+                let rhs = visit_expr(inner.next().unwrap());
+                match op.as_span().as_str() {
+                    "==" => Expr::Eq(Box::new(lhs), Box::new(rhs)),
+                    "!=" => Expr::Ne(Box::new(lhs), Box::new(rhs)),
+                    ">" => Expr::Gt(Box::new(lhs), Box::new(rhs)),
+                    ">=" => Expr::Ge(Box::new(lhs), Box::new(rhs)),
+                    "<" => Expr::Lt(Box::new(lhs), Box::new(rhs)),
+                    "<=" => Expr::Le(Box::new(lhs), Box::new(rhs)),
+                    _ => unreachable!(),
+                }
+            } else {
+                lhs
+            }
+        }
         _ => unreachable!(),
     }
 }
@@ -627,6 +625,14 @@ fn visit_assign_expr(pair: Pair<Rule>) -> Expr {
 fn visit_command_span(pair: Pair<Rule>, quoted: bool) -> Span {
     let body = visit_compound_list(pair.into_inner().next().unwrap());
     Span::Command { body, quoted }
+}
+
+fn visit_assignment_command(pair: Pair<Rule>) -> Command {
+    let assignments = pair
+        .into_inner()
+        .map(|inner| visit_assignment(inner))
+        .collect();
+    Command::Assignment { assignments }
 }
 
 #[cfg(test)]

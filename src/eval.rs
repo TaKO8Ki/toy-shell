@@ -1,16 +1,16 @@
 use crate::builtins::BuiltinCommandError;
-use crate::expand::expand_words;
-use crate::parser;
-use crate::parser::{Ast, RunIf, Term};
+use crate::expand::{expand_word_into_string, expand_words};
+use crate::parser::{self, Ast, Initializer, RunIf, Term};
 use crate::process::{
     run_external_command, run_in_foreground, run_internal_command, wait_child, wait_for_job,
     Context, ProcessState,
 };
 use crate::resolve::resolve_alias;
 use crate::shell::Shell;
+use crate::variable::Value;
 use crate::ExitStatus;
 
-use nix::unistd::{close, execv, fork, getpid, pipe, setpgid, ForkResult, Pid};
+use nix::unistd::{close, fork, pipe, setpgid, ForkResult, Pid};
 use std::os::unix::io::RawFd;
 use tracing::debug;
 
@@ -39,9 +39,6 @@ pub fn run_terms(
             match (last_status, &pipeline.run_if) {
                 (ExitStatus::ExitedWith(0), RunIf::Success) => (),
                 (ExitStatus::ExitedWith(_), RunIf::Failure) => (),
-                (ExitStatus::Break, _) => return ExitStatus::Break,
-                (ExitStatus::Continue, _) => return ExitStatus::Continue,
-                (ExitStatus::Return, _) => return ExitStatus::Return,
                 (_, RunIf::Always) => (),
                 _ => continue,
             }
@@ -157,18 +154,6 @@ fn run_pipeline(
                 Some(ExitStatus::Running(pid))
             }
             Ok(ExitStatus::ExitedWith(status)) => Some(ExitStatus::ExitedWith(status)),
-            Ok(ExitStatus::Break) => {
-                last_result = Some(ExitStatus::Break);
-                break;
-            }
-            Ok(ExitStatus::Continue) => {
-                last_result = Some(ExitStatus::Continue);
-                break;
-            }
-            Ok(ExitStatus::Return) => {
-                last_result = Some(ExitStatus::Return);
-                break;
-            }
             Ok(ExitStatus::NoExec) => {
                 last_result = Some(ExitStatus::NoExec);
                 break;
@@ -215,25 +200,6 @@ fn run_pipeline(
                     _ => unreachable!(),
                 }
             }
-            // } else if background {
-            //     // run_in_background(shell, &job, false);
-            //     ExitStatus::Running(pgid.unwrap())
-            // } else {
-            //     match run_in_foreground(shell, &job, false) {
-            //         ProcessState::Completed(status) => ExitStatus::ExitedWith(status),
-            //         ProcessState::Stopped(_) => ExitStatus::Running(pgid.unwrap()),
-            //         _ => unreachable!(),
-            //     }
-            // }
-        }
-        Some(ExitStatus::Break) => {
-            return ExitStatus::Break;
-        }
-        Some(ExitStatus::Continue) => {
-            return ExitStatus::Continue;
-        }
-        Some(ExitStatus::Return) => {
-            return ExitStatus::Return;
         }
         Some(ExitStatus::NoExec) => {
             return ExitStatus::NoExec;
@@ -332,7 +298,7 @@ fn run_command(
         // }
         // parser::Command::Break => ExitStatus::Break,
         // parser::Command::Continue => ExitStatus::Continue,
-        _ => todo!("unexpected commands"),
+        _ => unimplemented!("command: {:?}", command),
     };
 
     Ok(result)
@@ -375,4 +341,20 @@ fn run_simple_command(
     debug!("argv: {:?}", argv);
     // External commands
     run_external_command(shell, ctx, argv, redirects, assignments)
+}
+
+pub fn evaluate_initializer(shell: &mut Shell, initializer: &Initializer) -> anyhow::Result<Value> {
+    match initializer {
+        Initializer::String(ref word) => Ok(Value::String(expand_word_into_string(shell, word)?)),
+        Initializer::Array(ref words) => {
+            let elems = expand_words(shell, words)?;
+            match (elems.len(), elems.get(0)) {
+                (1, Some(body)) if body.is_empty() => {
+                    // Make `foo=()' an empty array.
+                    Ok(Value::Array(vec![]))
+                }
+                _ => Ok(Value::Array(elems)),
+            }
+        }
+    }
 }
