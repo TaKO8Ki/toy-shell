@@ -23,7 +23,7 @@ impl BuiltinCommand for Cd {
                 (
                     // relative path
                     Path::new(&current_dir)
-                        .join(dir.to_string())
+                        .join(dir)
                         .to_string_lossy()
                         .into_owned(),
                     true,

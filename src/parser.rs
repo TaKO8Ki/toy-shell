@@ -549,12 +549,7 @@ fn visit_assignment(pair: Pair<Rule>) -> Assignment {
     let mut inner = pair.into_inner();
 
     let name = inner.next().unwrap().as_span().as_str().to_owned();
-    let index = inner
-        .next()
-        .unwrap()
-        .into_inner()
-        .next()
-        .map(|p| visit_expr(p));
+    let index = inner.next().unwrap().into_inner().next().map(visit_expr);
     let initializer = inner.next().unwrap().into_inner().next().unwrap();
     match initializer.as_rule() {
         Rule::string_initializer => {

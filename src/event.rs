@@ -134,9 +134,9 @@ impl UserInput {
 
     pub fn move_by(&mut self, offset: isize) {
         if offset < 0 {
-            self.cursor = self.cursor.saturating_sub(offset.abs() as usize);
+            self.cursor = self.cursor.saturating_sub(offset.unsigned_abs());
         } else {
-            self.cursor = min(self.len(), self.cursor + offset.abs() as usize);
+            self.cursor = min(self.len(), self.cursor + offset.unsigned_abs());
         }
     }
 
@@ -354,7 +354,7 @@ impl SmashState {
     fn select_completion(&mut self) {
         if let Some(current_span) = &self.input_ctx.current_literal {
             if let Some(selected) = self.filtered_completions.get(self.selected_completion) {
-                self.input.replace_range(current_span.clone(), &selected);
+                self.input.replace_range(current_span.clone(), selected);
             }
 
             self.clear_completions();
@@ -416,7 +416,7 @@ impl SmashState {
                     !self.input.is_empty() && comp.starts_with(text)
                 })
             })
-            .map(|s| s.to_string().replace(" ", "\\ "))
+            .map(|s| s.to_string().replace(' ', "\\ "))
             .collect();
         debug!(?self.filtered_completions);
         self.selected_completion = min(
@@ -642,7 +642,7 @@ impl SmashState {
             prompt_str.push_str(&path);
         }
         prompt_str.push_str(" $ ");
-        queue!(stdout, Print(prompt_str.replace("\n", "\r\n"))).ok();
+        queue!(stdout, Print(prompt_str.replace('\n', "\r\n"))).ok();
         prompt_len += prompt_str.len();
         stdout.flush().unwrap();
 
@@ -714,7 +714,7 @@ impl SmashState {
         if self.clear_above > 0 {
             // Redraw the prompt since it has been cleared.
             let (prompt_str, _) = (String::new(), 0);
-            queue!(stdout, Print("\r"), Print(prompt_str.replace("\n", "\r\n"))).ok();
+            queue!(stdout, Print("\r"), Print(prompt_str.replace('\n', "\r\n"))).ok();
         }
 
         // Print the highlighted input.
@@ -724,7 +724,7 @@ impl SmashState {
             Print("\r"),
             cursor::MoveRight(self.prompt_len as u16),
             Clear(ClearType::UntilNewLine),
-            Print(h.replace("\n", "\r\n"))
+            Print(h.replace('\n', "\r\n"))
         )
         .ok();
 
