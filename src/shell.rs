@@ -86,20 +86,20 @@ impl Shell {
         let mut f = File::open(script_file)?;
         let mut script = String::new();
         f.read_to_string(&mut script)?;
-        Ok(self.run_str(script.as_str()))
+        Ok(self.run_script(script.as_str()))
     }
 
-    /// Parses and runs a script. Stdin/stdout/stderr are 0, 1, 2, respectively.
-    pub fn run_str(&mut self, script: &str) -> ExitStatus {
+    /// Parse and run a script
+    pub fn run_script(&mut self, script: &str) -> ExitStatus {
         // Inherit shell's stdin/stdout/stderr.
         let stdin = 0;
         let stdout = 1;
         let stderr = 2;
-        self.run_str_with_stdio(script, stdin, stdout, stderr)
+        self.run_script_with_stdio(script, stdin, stdout, stderr)
     }
 
-    /// Parses and runs a script in the given context.
-    pub fn run_str_with_stdio(
+    /// Parse and run a script in the given context
+    pub fn run_script_with_stdio(
         &mut self,
         script: &str,
         stdin: RawFd,
@@ -151,7 +151,6 @@ impl Shell {
         frame.set(key, value.clone());
 
         if !is_local && key == "PATH" {
-            // $PATH is being updated. Reload directories.
             if let Value::String(ref path) = value {
                 self.path_table.scan(path);
             }

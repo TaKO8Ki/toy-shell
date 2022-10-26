@@ -8,7 +8,6 @@ pub enum Value {
     // TODO: support function
 }
 
-/// A shell variable.
 #[derive(Debug)]
 pub struct Variable {
     // The inner value. `None` represents *null*.
@@ -38,7 +37,7 @@ impl Variable {
 }
 
 pub struct Frame {
-    /// A `(variable name, varible)` map.
+    /// key: variable name, value: varible map.
     vars: HashMap<String, Rc<Variable>>,
 }
 
@@ -51,10 +50,6 @@ impl Frame {
 
     pub fn get(&self, key: &str) -> Option<Rc<Variable>> {
         self.vars.get(key).cloned()
-    }
-
-    pub fn remove(&mut self, key: &str) -> Option<Rc<Variable>> {
-        self.vars.remove(key)
     }
 
     pub fn set(&mut self, key: &str, value: Value) {

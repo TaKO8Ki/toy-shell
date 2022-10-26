@@ -1,8 +1,10 @@
 use super::{BuiltinCommand, BuiltinCommandContext};
 use crate::parser;
 use crate::process::ExitStatus;
+
 use pest::Parser;
 use pest_derive::Parser;
+use std::io::Write;
 use tracing::debug;
 
 #[derive(Parser)]
@@ -23,7 +25,7 @@ fn parse_alias(alias: &str) -> Result<(String, String), parser::ParseError> {
 pub struct Alias;
 
 impl BuiltinCommand for Alias {
-    fn run(&self, ctx: BuiltinCommandContext) -> ExitStatus {
+    fn run(&self, ctx: &mut BuiltinCommandContext) -> ExitStatus {
         debug!("alias: argv={:?}", ctx.argv);
         if let Some(alias) = ctx.argv.get(1) {
             match parse_alias(alias) {
@@ -33,11 +35,11 @@ impl BuiltinCommand for Alias {
                     return ExitStatus::ExitedWith(0);
                 }
                 Err(parser::ParseError::Fatal(err)) => {
-                    smash_err!("alias: {}", err);
+                    writeln!(ctx.stderr, "nsh: alias: {}", err).ok();
                     return ExitStatus::ExitedWith(1);
                 }
                 Err(parser::ParseError::Empty) => {
-                    smash_err!("alias: alias can't be empty string");
+                    writeln!(ctx.stderr, "nsh: alias: alias can't be empty string").ok();
                     return ExitStatus::ExitedWith(1);
                 }
             }

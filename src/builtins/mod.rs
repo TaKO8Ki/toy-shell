@@ -1,3 +1,4 @@
+use crate::fd_file::FdFile;
 use crate::shell::Shell;
 use crate::ExitStatus;
 
@@ -11,12 +12,15 @@ mod export;
 mod source;
 
 pub trait BuiltinCommand {
-    fn run(&self, ctx: BuiltinCommandContext) -> ExitStatus;
+    fn run(&self, ctx: &mut BuiltinCommandContext) -> ExitStatus;
 }
 
 pub struct BuiltinCommandContext<'a> {
     pub argv: &'a [String],
     pub shell: &'a mut Shell,
+    pub stdin: FdFile,
+    pub stdout: FdFile,
+    pub stderr: FdFile,
 }
 
 #[derive(Debug, Error)]

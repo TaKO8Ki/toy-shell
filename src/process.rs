@@ -1,5 +1,6 @@
 use crate::builtins::{BuiltinCommandContext, BuiltinCommandError};
 use crate::eval::evaluate_initializer;
+use crate::fd_file::FdFile;
 use crate::parser;
 use crate::shell::Shell;
 use crate::variable::Value;
@@ -7,7 +8,7 @@ use crate::variable::Value;
 use nix::sys::signal::{sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal};
 use nix::sys::termios::{tcgetattr, tcsetattr, SetArg::TCSADRAIN, Termios};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
-use nix::unistd::{execv, fork, getpid, pipe, setpgid, tcsetpgrp, ForkResult, Pid};
+use nix::unistd::{execv, fork, getpid, setpgid, tcsetpgrp, ForkResult, Pid};
 use std::cell::RefCell;
 use std::ffi::CString;
 use std::fmt;
@@ -74,26 +75,6 @@ impl Job {
         }
     }
 
-    #[inline]
-    pub fn id(&self) -> JobId {
-        self.id
-    }
-
-    #[inline]
-    pub fn cmd(&self) -> &str {
-        self.cmd.as_str()
-    }
-
-    pub fn state(&self, shell: &Shell) -> &'static str {
-        if self.completed(shell) {
-            "done"
-        } else if self.stopped(shell) {
-            "stopped"
-        } else {
-            "running"
-        }
-    }
-
     pub fn completed(&self, shell: &Shell) -> bool {
         self.processes.iter().all(|pid| {
             let state = shell.get_process_state(*pid).unwrap();
@@ -118,20 +99,11 @@ pub enum ProcessState {
     Stopped(Pid),
 }
 
-pub fn run_in_foreground(shell: &mut Shell, job: &Rc<Job>, sigcont: bool) -> ProcessState {
+pub fn run_in_foreground(shell: &mut Shell, job: &Rc<Job>) -> ProcessState {
     debug!("run_in_foreground");
     shell.last_fore_job = Some(job.clone());
     set_terminal_process_group(job.pgid);
 
-    // if sigcont {
-    //     if let Some(ref termios) = *job.termios.borrow() {
-    //         restore_terminal_attrs(termios);
-    //     }
-    //     kill_process_group(job.pgid, Signal::SIGCONT).expect("failed to kill(SIGCONT)");
-    //     debug!("sent sigcont");
-    // }
-
-    // Wait for the job to exit or stop.
     let status = wait_for_job(shell, job);
 
     // Save the current terminal status.
@@ -252,18 +224,25 @@ pub fn wait_child(pid: Pid) -> anyhow::Result<i32> {
 pub fn run_internal_command(
     shell: &mut Shell,
     argv: &[String],
-    mut stdin: RawFd,
-    mut stdout: RawFd,
-    mut stderr: RawFd,
-    redirects: &[parser::Redirection],
+    stdin: RawFd,
+    stdout: RawFd,
+    stderr: RawFd,
+    _redirects: &[parser::Redirection],
 ) -> anyhow::Result<ExitStatus> {
     let command = match crate::builtins::builtin_command(argv[0].as_str()) {
         Some(func) => func,
         _ => return Err(BuiltinCommandError::NotFound.into()),
     };
-    let result = command.run(BuiltinCommandContext { argv, shell });
 
     // TODO: support redirections
+
+    let result = command.run(&mut BuiltinCommandContext {
+        argv,
+        shell,
+        stdin: FdFile::new(stdin),
+        stdout: FdFile::new(stdout),
+        stderr: FdFile::new(stderr),
+    });
 
     Ok(result)
 }
@@ -272,7 +251,7 @@ pub fn run_external_command(
     shell: &mut Shell,
     ctx: &Context,
     argv: Vec<String>,
-    redirects: &[parser::Redirection],
+    _redirects: &[parser::Redirection],
     assignments: &[parser::Assignment],
 ) -> anyhow::Result<ExitStatus> {
     // let mut fds = Vec::new();

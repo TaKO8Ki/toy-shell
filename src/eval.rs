@@ -159,17 +159,7 @@ fn run_pipeline(
                 break;
             }
             Err(err) => {
-                // if err
-                //     .find_root_cause()
-                //     .downcast_ref::<NoMatchesError>()
-                //     .is_some()
-                // {
-                //     debug!("error: no matches");
-                //     last_result = Some(ExitStatus::ExitedWith(1));
-                //     break;
-                // }
-
-                unreachable!();
+                unimplemented!("error: {}", err);
             }
         };
     }
@@ -194,7 +184,7 @@ fn run_pipeline(
                     _ => unreachable!(),
                 }
             } else {
-                match run_in_foreground(shell, &job, false) {
+                match run_in_foreground(shell, &job) {
                     ProcessState::Completed(status) => ExitStatus::ExitedWith(status),
                     ProcessState::Stopped(_) => ExitStatus::Running(pgid.unwrap()),
                     _ => unreachable!(),

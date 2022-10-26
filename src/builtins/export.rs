@@ -1,17 +1,18 @@
 use super::{BuiltinCommand, BuiltinCommandContext};
 use crate::process::ExitStatus;
 use crate::variable::Value;
+
 use std::io::Write;
 use tracing::debug;
 
 pub struct Export;
 
 impl BuiltinCommand for Export {
-    fn run(&self, ctx: BuiltinCommandContext) -> ExitStatus {
+    fn run(&self, ctx: &mut BuiltinCommandContext) -> ExitStatus {
         if ctx.argv.is_empty() {
             for name in ctx.shell.exported_names() {
                 if let Some(var) = ctx.shell.get(name) {
-                    // writeln!(ctx.stdout, "{}={}", name, var.as_str()).ok();
+                    writeln!(ctx.stdout, "{}={}", name, var.as_str()).ok();
                 }
             }
 

@@ -1,6 +1,6 @@
 use crate::context_parser::{self, InputContext};
 use crate::highlight::highlight;
-use crossterm::cursor::{self, MoveTo};
+use crossterm::cursor;
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::style::{Attribute, Color, Print, SetAttribute, SetForegroundColor};
 use crossterm::terminal::{self, disable_raw_mode, enable_raw_mode, Clear, ClearType};
@@ -34,7 +34,6 @@ struct UserInput {
 }
 
 fn truncate(s: &str, len: usize) -> String {
-    // TODO: Return &str
     s.chars().take(len).collect()
 }
 
@@ -333,6 +332,13 @@ impl SmashState {
                 }
 
                 self.do_complete = false;
+            }
+
+            if let Some(started_at) = started_at {
+                debug!(
+                    "handle_event: took {}ms",
+                    started_at.elapsed().unwrap().as_millis()
+                );
             }
         }
     }
@@ -645,11 +651,6 @@ impl SmashState {
         self.prompt_len = prompt_len;
     }
 
-    fn push_buffer_stack(&mut self) {
-        self.input_stack.push(self.input.as_str().to_owned());
-        self.input.clear();
-    }
-
     fn run_command(&mut self) {
         self.history_selector.clear_similary_named_history();
         self.history_selector.reset();
@@ -659,7 +660,7 @@ impl SmashState {
 
         execute!(std::io::stdout(), Print("\r\n")).ok();
         disable_raw_mode().ok();
-        self.shell.run_str(self.input.as_str());
+        self.shell.run_script(self.input.as_str());
         enable_raw_mode().ok();
 
         self.shell.history_mut().append(self.input.as_str());
@@ -678,7 +679,7 @@ impl SmashState {
         debug!(
             "history={:?}",
             self.history_selector
-                .similary_named_history(&self.shell.history())
+                .similary_named_history(self.shell.history())
         );
     }
 
@@ -743,21 +744,6 @@ impl SmashState {
         if current_x % self.columns == 0 {
             queue!(stdout, Print("\r\n")).ok();
         }
-
-        // Print a notification message.
-        // if let Some(notification) = &self.notification {
-        //     queue!(
-        //         stdout,
-        //         Print("\r\n"),
-        //         SetForegroundColor(Color::Yellow),
-        //         SetAttribute(Attribute::Bold),
-        //         Print("[!] "),
-        //         Print(notification),
-        //         SetAttribute(Attribute::Reset),
-        //         Clear(ClearType::UntilNewLine),
-        //     )
-        //     .ok();
-        // }
 
         // let notification_height = if self.notification.is_some() { 1 } else { 0 };
         // let input_height = current_x / self.columns + notification_height;

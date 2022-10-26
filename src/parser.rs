@@ -49,15 +49,7 @@ pub struct BinaryExpr {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Expr {
-    Add(BinaryExpr),
-    Sub(BinaryExpr),
-    Mul(BinaryExpr),
-    Div(BinaryExpr),
     Assign { name: String, rhs: Box<Expr> },
-    Literal(i32),
-
-    // `foo` in $((foo + 1))
-    Parameter { name: String },
 
     // Conditions. Evaluated to 1 if it satistifies or 0 if not.
     Eq(Box<Expr>, Box<Expr>),
@@ -66,12 +58,6 @@ pub enum Expr {
     Le(Box<Expr>, Box<Expr>),
     Gt(Box<Expr>, Box<Expr>),
     Ge(Box<Expr>, Box<Expr>),
-
-    // `i++` and `i--`
-    Inc(String),
-    Dec(String),
-
-    Expr(Box<Expr>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -301,76 +287,6 @@ fn visit_simple_command(pair: Pair<Rule>) -> Command {
         assignments,
     }
 }
-
-// fn visit_assignment(pair: Pair<Rule>) -> Assignment {
-//     let mut inner = pair.into_inner();
-
-//     let name = inner.next().unwrap().as_span().as_str().to_owned();
-//     let index = inner
-//         .next()
-//         .unwrap()
-//         .into_inner()
-//         .next()
-//         .map(|p| visit_expr(p));
-//     let initializer = inner.next().unwrap().into_inner().next().unwrap();
-//     match initializer.as_rule() {
-//         Rule::string_initializer => {
-//             let word =
-//                 Initializer::String(visit_word(initializer.into_inner().next().unwrap()));
-//             Assignment {
-//                 name,
-//                 initializer: word,
-//                 index,
-//             }
-//         }
-//         Rule::array_initializer => {
-//             let word = Initializer::Array(
-//                 initializer
-//                     .into_inner()
-//                     .map(|p| visit_word(p))
-//                     .collect(),
-//             );
-//             let index = None;
-//             Assignment {
-//                 name,
-//                 initializer: word,
-//                 index,
-//             }
-//         }
-//         _ => unreachable!(),
-//     }
-// }
-
-// fn visit_expr(pair: Pair<Rule>) -> Expr {
-//     let mut inner = pair.clone().into_inner();
-//     let first = inner.next().unwrap();
-//     let maybe_op = inner.next();
-
-//     match pair.as_rule() {
-//         Rule::assign => visit_assign_expr(pair),
-//         Rule::arith => visit_arith_expr(pair),
-//         Rule::term => visit_term(pair),
-//         Rule::factor => visit_factor(pair),
-//         Rule::expr => {
-//             let lhs = visit_assign_expr(first);
-//             if let Some(op) = maybe_op {
-//                 let rhs = visit_expr(inner.next().unwrap());
-//                 match op.as_span().as_str() {
-//                     "==" => Expr::Eq(Box::new(lhs), Box::new(rhs)),
-//                     "!=" => Expr::Ne(Box::new(lhs), Box::new(rhs)),
-//                     ">" => Expr::Gt(Box::new(lhs), Box::new(rhs)),
-//                     ">=" => Expr::Ge(Box::new(lhs), Box::new(rhs)),
-//                     "<" => Expr::Lt(Box::new(lhs), Box::new(rhs)),
-//                     "<=" => Expr::Le(Box::new(lhs), Box::new(rhs)),
-//                     _ => unreachable!(),
-//                 }
-//             } else {
-//                 lhs
-//             }
-//         }
-//         _ => unreachable!(),
-//     }
-// }
 
 fn visit_redirect(pair: Pair<Rule>) -> Redirection {
     let mut inner = pair.into_inner();
@@ -628,10 +544,7 @@ fn visit_command_span(pair: Pair<Rule>, quoted: bool) -> Span {
 }
 
 fn visit_assignment_command(pair: Pair<Rule>) -> Command {
-    let assignments = pair
-        .into_inner()
-        .map(|inner| visit_assignment(inner))
-        .collect();
+    let assignments = pair.into_inner().map(visit_assignment).collect();
     Command::Assignment { assignments }
 }
 

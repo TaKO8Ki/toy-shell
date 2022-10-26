@@ -17,6 +17,7 @@ mod context_parser;
 mod eval;
 mod event;
 mod expand;
+mod fd_file;
 mod highlight;
 mod history;
 mod parser;

@@ -52,41 +52,9 @@ impl History {
         self.history.len()
     }
 
-    // pub fn nth_last(&self, nth: usize) -> Option<String> {
-    //     self.history.nth_last(nth)
-    // }
-
-    pub fn search(&self, query: &str, filter_by_cwd: bool) -> Vec<String> {
-        if filter_by_cwd {
-            let cwd = std::env::current_dir().unwrap();
-            self.history
-                .iter()
-                .filter(|cmd| match self.path2cwd.get(*cmd) {
-                    Some(path) if *path == cwd => cmd.starts_with(query),
-                    Some(path) => {
-                        debug!("path='{}' {}", path.display(), cwd.display());
-                        false
-                    }
-                    _ => false,
-                })
-                .cloned()
-                .collect()
-        } else {
-            self.history
-                .iter()
-                .filter(|cmd| cmd.starts_with(query))
-                .cloned()
-                .collect()
-        }
-    }
-
     /// Appends a history to the history file.
     pub fn append(&mut self, cmd: &str) {
         if cmd.is_empty() {
-            return;
-        }
-
-        if cmd.len() < 8 {
             return;
         }
 

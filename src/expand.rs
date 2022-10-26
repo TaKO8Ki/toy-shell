@@ -110,38 +110,13 @@ pub fn expand_word_into_vec(
 pub fn expand_param(
     shell: &mut Shell,
     name: &str,
-    op: &ExpansionOp,
+    _op: &ExpansionOp,
 ) -> anyhow::Result<Vec<Option<String>>> {
     match name {
         "?" => {
             return Ok(vec![Some(shell.last_status().to_string())]);
         }
-        // "!" => {
-        //     let pgid = match shell.last_back_job() {
-        //         Some(job) => job.pgid.to_string(),
-        //         None => 0.to_string(),
-        //     };
-
-        //     return Ok(vec![Some(pgid)]);
-        // }
-        // "0" => {
-        //     return Ok(vec![Some(shell.script_name.clone())]);
-        // }
-        // "$" => {
-        //     return Ok(vec![Some(shell.shell_pgid.to_string())]);
-        // }
-        // "#" => {
-        //     return Ok(vec![Some(shell.current_frame().num_args().to_string())]);
-        // }
-        // "*" => {
-        //     let args = shell.current_frame().get_string_args();
-        //     let expanded = args.join(" ");
-        //     return Ok(vec![Some(expanded)]);
-        // }
-        // "@" => {
-        //     let args = shell.current_frame().get_string_args();
-        //     return Ok(args.iter().map(|a| Some(a.to_owned())).collect());
-        // }
+        // TODO: support the other expansion ops
         _ => {
             debug!("{:?}={:?}", name, shell.get(name));
             if let Some(var) = shell.get(name) {
@@ -153,34 +128,5 @@ pub fn expand_param(
     smash_err!("undefined variable `{}`", name);
     std::process::exit(1);
 
-    // The variable is not defined or is nulll
-    // http://pubs.opengroup.org/onlinepubs/009695399/utilities/xcu_chap02.html#tag_02_06_02
-    // match op {
-    //     ExpansionOp::Length => {
-    //         if shell.nounset {
-    //             print_err!("undefined variable `{}'", name);
-    //             std::process::exit(1);
-    //         }
-
-    //         Ok(vec![Some("0".to_owned())])
-    //     }
-    //     ExpansionOp::GetOrEmpty => {
-    //         if shell.nounset {
-    //             print_err!("undefined variable `{}'", name);
-    //             std::process::exit(1);
-    //         }
-
-    //         Ok(vec![Some("".to_owned())])
-    //     }
-    //     ExpansionOp::GetOrDefault(word) | ExpansionOp::GetNullableOrDefault(word) => {
-    //         expand_word_into_string(shell, word).map(|s| vec![Some(s)])
-    //     }
-    //     ExpansionOp::GetOrDefaultAndAssign(word)
-    //     | ExpansionOp::GetNullableOrDefaultAndAssign(word) => {
-    //         let content = expand_word_into_string(shell, word)?;
-    //         shell.set(name, Value::String(content.clone()), false);
-    //         Ok(vec![Some(content)])
-    //     }
-    //     ExpansionOp::Subst { .. } => Ok(vec![Some("".to_owned())]),
-    // }
+    // TODO: handling errors depending on the expansion op
 }
