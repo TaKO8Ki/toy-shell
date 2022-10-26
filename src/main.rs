@@ -1,4 +1,3 @@
-use crossterm::terminal;
 use crossterm::tty::IsTty;
 use std::fs::File;
 use std::path::Path;
@@ -52,6 +51,4 @@ fn main() {
     shell.set_interactive(is_tty);
 
     SmashState::new(shell).run();
-
-    terminal::disable_raw_mode().unwrap();
 }

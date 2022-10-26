@@ -160,7 +160,7 @@ fn run_pipeline(
     }
 
     // Wait for the last command in the pipeline.
-    let last_status = match last_result {
+    match last_result {
         Some(ExitStatus::ExitedWith(status)) => {
             shell.set_last_status(status);
             ExitStatus::ExitedWith(status)
@@ -190,9 +190,7 @@ fn run_pipeline(
             debug!("nothing to execute");
             ExitStatus::ExitedWith(0)
         }
-    };
-
-    last_status
+    }
 }
 
 fn run_command(

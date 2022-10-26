@@ -307,7 +307,7 @@ pub fn run_external_command(
                 match value {
                     Value::String(s) => std::env::set_var(&assignment.name, s),
                     Value::Array(_) => {
-                        eprintln!("Array assignments in a command is not supported.");
+                        smash_err!("Array assignments in a command is not supported.");
                         std::process::exit(1);
                     }
                 }
@@ -319,11 +319,11 @@ pub fn run_external_command(
                     unreachable!();
                 }
                 Err(nix::errno::Errno::EACCES) => {
-                    eprintln!("Failed to exec {:?} (EACCESS). chmod(1) may help.", argv0);
+                    smash_err!("Failed to exec {:?} (EACCESS). chmod(1) may help.", argv0);
                     std::process::exit(1);
                 }
                 Err(err) => {
-                    eprintln!("Failed to exec {:?} ({})", argv0, err);
+                    smash_err!("Failed to exec {:?} ({})", argv0, err);
                     std::process::exit(1);
                 }
             }
