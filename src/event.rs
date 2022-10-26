@@ -633,7 +633,7 @@ impl SmashState {
         if let Ok(current_dir) = std::env::current_dir() {
             let mut path = current_dir.to_str().unwrap().to_string();
 
-            // "/Users/chandler/games/doom" -> "~/venus/games/doom"
+            // "/Users/username/path/to" -> "~/path/to"
             if let Some(home_dir) = dirs::home_dir() {
                 let home_dir = home_dir.to_str().unwrap();
                 if path.starts_with(&home_dir) {
@@ -685,7 +685,6 @@ impl SmashState {
 
     fn print_user_input(&mut self) {
         if cfg!(test) {
-            // Do nothing in tests.
             return;
         }
 
@@ -725,7 +724,7 @@ impl SmashState {
         )
         .ok();
 
-        // Print the first history item;
+        // Print the first command in history
         if let Some(history) = self.similary_named_history() {
             debug!(?history, ?self.input_ctx.input);
             if let Some(suffix) = history.strip_prefix(&self.input_ctx.input) {
@@ -745,8 +744,6 @@ impl SmashState {
             queue!(stdout, Print("\r\n")).ok();
         }
 
-        // let notification_height = if self.notification.is_some() { 1 } else { 0 };
-        // let input_height = current_x / self.columns + notification_height;
         let input_height = current_x / self.columns;
 
         let mut completions_height = 0;
@@ -799,10 +796,6 @@ impl SmashState {
                     )
                     .ok();
                 } else {
-                    // if let Some(ThemeColor::DirColor) = color {
-                    //     self.dircolor.write(&mut stdout, Path::new(comp)).ok();
-                    // }
-
                     queue!(
                         stdout,
                         Print(truncate(comp, self.columns)),

@@ -7,6 +7,9 @@
 - [ ] Redirections
 - [ ] Pipe
 - [ ] Some kinds of params
+- [ ] if/while/for
+- [ ] Background jobs
+- [ ] set -e/u/n
 
 ## References
 

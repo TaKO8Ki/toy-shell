@@ -14,7 +14,7 @@ pub fn resolve_alias(shell: &Shell, argv: &[Word]) -> Vec<Word> {
             Span::Literal(lit) => Some(lit),
             _ => None,
         })
-        // The very first span is literal. Search the registered aliases.
+        // The very first span is literal. Search the created aliases.
         .and_then(|lit| shell.lookup_alias(lit.as_str()))
         .map(|alias_str| {
             // Found the alias. Split the alias string by whitespace into words.
@@ -34,6 +34,6 @@ pub fn resolve_alias(shell: &Shell, argv: &[Word]) -> Vec<Word> {
 
             alias_words
         })
-        // Failed to expand alias. Return argv as it is.
+        // Failed to resolve alias. Return argv as it is.
         .unwrap_or_else(|| argv.to_owned())
 }

@@ -1,6 +1,5 @@
-//! A yet another shell script parser. In contrast to [`parser::parse`]
-//! this returns an syntax array (rather than syntax tree) which makes it easy to
-//! implement context-aware stuffs such as completion and syntax highlighting.
+//! A parser for completion and syntax highlighting.
+
 use std::collections::VecDeque;
 use std::ops::Range;
 
@@ -90,7 +89,6 @@ fn is_varname_char(ch: char) -> bool {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct InputContext {
-    // The input string.
     pub input: String,
     // The cursor position.
     pub cursor: usize,
@@ -170,20 +168,14 @@ impl ContextParser {
             self.index += 1;
             return (State::EnvOrArgv0, Span::CommandSep(CommandSepType::Newline));
         }
-
-        // Command separator.
         if s.starts_with(';') {
             self.index += 1;
             return (State::EnvOrArgv0, Span::CommandSep(CommandSepType::Semi));
         }
-
-        // Command separator.
         if s.starts_with('|') {
             self.index += 1;
             return (State::EnvOrArgv0, Span::CommandSep(CommandSepType::Pipe));
         }
-
-        // Command separator.
         if s.starts_with("&&") {
             self.index += 2;
             return (
@@ -191,8 +183,6 @@ impl ContextParser {
                 Span::CommandSep(CommandSepType::DoubleAnd),
             );
         }
-
-        // Command separator.
         if s.starts_with('&') {
             self.index += 1;
             return (

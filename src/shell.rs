@@ -18,13 +18,6 @@ use std::rc::Rc;
 use tracing::debug;
 
 pub struct Shell {
-    /// `set -e`
-    pub errexit: bool,
-    /// `set -u`
-    pub nounset: bool,
-    /// `set -n`
-    pub noexec: bool,
-
     last_status: i32,
 
     pub interactive: bool,
@@ -53,9 +46,6 @@ impl Shell {
     pub fn new(history_path: &Path) -> Self {
         Self {
             last_status: 0,
-            errexit: false,
-            nounset: false,
-            noexec: false,
             interactive: false,
             path_table: PathTable::new(),
             last_fore_job: None,

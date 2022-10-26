@@ -25,7 +25,6 @@ pub struct Context {
     pub pgid: Option<Pid>,
     /// The process should be executed in background.
     pub background: bool,
-    /// Is the shell interactive?
     pub interactive: bool,
 }
 
@@ -34,8 +33,7 @@ pub struct Context {
 pub enum ExitStatus {
     ExitedWith(i32),
     Running(Pid),
-    // The command is not executed because of `noexec`.
-    NoExec,
+    // TODO: support noexec
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -125,10 +123,6 @@ pub fn restore_terminal_attrs(termios: &Termios) {
     tcsetattr(0, TCSADRAIN, termios).expect("failed to tcsetattr");
 }
 
-// fn kill_process_group(pgid: Pid, signal: Signal) -> anyhow::Result<()> {
-//     kill(Pid::from_raw(-pgid.as_raw()), signal).map(Error::into)
-// }
-
 pub fn wait_for_job(shell: &mut Shell, job: &Rc<Job>) -> ProcessState {
     loop {
         if job.completed(shell) || job.stopped(shell) {
@@ -189,14 +183,7 @@ pub fn wait_for_any_process(shell: &mut Shell, no_block: bool) -> Option<Pid> {
 }
 
 pub fn destroy_job(shell: &mut Shell, job: &Rc<Job>) {
-    // let mut a: HashSet<Rc<Job>> = HashSet::new();
-    // a.remove(job);
-
-    // if shell.background_jobs_mut().remove(job) {
-    //     // The job was a background job. Notify the user that the job
-    //     // has finished.
-    //     println!("[{}] Done: {}", job.id, job.cmd);
-    // }
+    // TODO: support background jobs
 
     shell.jobs_mut().remove(&job.id).unwrap();
 
@@ -254,34 +241,7 @@ pub fn run_external_command(
     _redirects: &[parser::Redirection],
     assignments: &[parser::Assignment],
 ) -> anyhow::Result<ExitStatus> {
-    // let mut fds = Vec::new();
-    // for r in redirects {
-    //     match r.target {
-    //         parser::RedirectionType::File(ref wfilepath) => {
-    //             let mut options = OpenOptions::new();
-    //             match &r.direction {
-    //                 parser::RedirectionDirection::Input => {
-    //                     options.read(true);
-    //                 }
-    //                 parser::RedirectionDirection::Output => {
-    //                     options.write(true).create(true);
-    //                 }
-    //                 parser::RedirectionDirection::Append => {
-    //                     options.write(true).append(true);
-    //                 }
-    //             };
-
-    //             debug!("redirection: options={:?}", options);
-    //             let filepath = expand_word_into_string(shell, wfilepath)?;
-    //             if let Ok(file) = options.open(&filepath) {
-    //                 fds.push((file.into_raw_fd(), r.fd as RawFd))
-    //             } else {
-    //                 debug!("failed to open file: `{}'", filepath);
-    //                 return Ok(ExitStatus::ExitedWith(1));
-    //             }
-    //         }
-    //     }
-    // }
+    // TODO: support redirections
 
     let argv0 = if argv[0].starts_with('/') || argv[0].starts_with("./") {
         CString::new(argv[0].as_str())?
@@ -294,7 +254,6 @@ pub fn run_external_command(
             }
         }
     };
-    // };
 
     let mut args = Vec::new();
     for arg in argv {
@@ -336,19 +295,12 @@ pub fn run_external_command(
                 }
             }
 
-            // Initialize stdin/stdout/stderr and redirections.
-            // for (src, dst) in fds {
-            //     move_fd(src, dst);
-            // }
-
-            // Set exported variables.
             for name in shell.exported_names() {
                 if let Some(var) = shell.get(name) {
                     std::env::set_var(name, var.as_str());
                 }
             }
 
-            // Load assignments.
             for assignment in assignments {
                 let value = evaluate_initializer(shell, &assignment.initializer)
                     .expect("failed to evaluate the initializer");

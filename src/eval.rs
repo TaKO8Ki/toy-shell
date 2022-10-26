@@ -35,7 +35,6 @@ pub fn run_terms(
     let mut last_status = ExitStatus::ExitedWith(0);
     for term in terms {
         for pipeline in &term.pipelines {
-            // Should we execute the pipline?
             match (last_status, &pipeline.run_if) {
                 (ExitStatus::ExitedWith(0), RunIf::Success) => (),
                 (ExitStatus::ExitedWith(_), RunIf::Failure) => (),
@@ -154,10 +153,6 @@ fn run_pipeline(
                 Some(ExitStatus::Running(pid))
             }
             Ok(ExitStatus::ExitedWith(status)) => Some(ExitStatus::ExitedWith(status)),
-            Ok(ExitStatus::NoExec) => {
-                last_result = Some(ExitStatus::NoExec);
-                break;
-            }
             Err(err) => {
                 unimplemented!("error: {}", err);
             }
@@ -191,22 +186,11 @@ fn run_pipeline(
                 }
             }
         }
-        Some(ExitStatus::NoExec) => {
-            return ExitStatus::NoExec;
-        }
         None => {
             debug!("nothing to execute");
             ExitStatus::ExitedWith(0)
         }
     };
-
-    if shell.errexit {
-        if let ExitStatus::ExitedWith(status) = last_status {
-            if status != 0 {
-                std::process::exit(status);
-            }
-        }
-    }
 
     last_status
 }
@@ -216,10 +200,6 @@ fn run_command(
     command: &parser::Command,
     ctx: &Context,
 ) -> anyhow::Result<ExitStatus> {
-    if shell.noexec {
-        return Ok(ExitStatus::NoExec);
-    }
-
     debug!("run_command: {:?}", command);
     let result = match command {
         parser::Command::SimpleCommand {
@@ -227,67 +207,6 @@ fn run_command(
             redirects,
             assignments,
         } => run_simple_command(shell, ctx, argv, redirects, assignments)?,
-        // parser::Command::If {
-        //     condition,
-        //     then_part,
-        //     elif_parts,
-        //     else_part,
-        //     redirects,
-        // } => run_if_command(
-        //     shell, ctx, condition, then_part, elif_parts, else_part, redirects,
-        // )?,
-        // parser::Command::While { condition, body } => {
-        //     run_while_command(shell, ctx, condition, body)?
-        // }
-        // parser::Command::Case { word, cases } => run_case_command(shell, ctx, word, cases)?,
-        // parser::Command::For {
-        //     var_name,
-        //     words,
-        //     body,
-        // } => run_for_command(shell, ctx, var_name, words, body)?,
-        // parser::Command::ArithFor {
-        //     init,
-        //     cond,
-        //     update,
-        //     body,
-        // } => run_arith_for_command(shell, ctx, init, cond, update, body)?,
-        // parser::Command::LocalDef { declarations } => run_local_command(shell, declarations)?,
-        // parser::Command::FunctionDef { name, body } => {
-        //     shell.set(name, Value::Function(body.clone()), true);
-        //     ExitStatus::ExitedWith(0)
-        // }
-        // parser::Command::Assignment { assignments } => {
-        //     for assign in assignments {
-        //         let value = evaluate_initializer(shell, &assign.initializer)?;
-        //         shell.assign(&assign.name, value)
-        //     }
-        //     ExitStatus::ExitedWith(0)
-        // }
-        // parser::Command::Cond(expr) => {
-        //     let result = evaluate_cond(shell, expr)?;
-        //     if result {
-        //         ExitStatus::ExitedWith(0)
-        //     } else {
-        //         ExitStatus::ExitedWith(1)
-        //     }
-        // }
-        // parser::Command::Group { terms } => {
-        //     run_terms(shell, terms, ctx.stdin, ctx.stdout, ctx.stderr)
-        // }
-        // parser::Command::SubShellGroup { terms } => {
-        //     let pid = spawn_subshell(shell, terms, ctx)?;
-        //     let status = wait_child(pid).unwrap_or(1);
-        //     ExitStatus::ExitedWith(status)
-        // }
-        // parser::Command::Return { status } => {
-        //     if let Some(status) = status {
-        //         shell.set_last_status(*status);
-        //     }
-
-        //     ExitStatus::Return
-        // }
-        // parser::Command::Break => ExitStatus::Break,
-        // parser::Command::Continue => ExitStatus::Continue,
         _ => unimplemented!("command: {:?}", command),
     };
 
@@ -301,22 +220,12 @@ fn run_simple_command(
     redirects: &[parser::Redirection],
     assignments: &[parser::Assignment],
 ) -> anyhow::Result<ExitStatus> {
-    // let argv = expand_words(shell, &expand_alias(shell, argv))?;
     let argv = expand_words(shell, &resolve_alias(shell, argv))?;
     if argv.is_empty() {
-        // `argv` is empty. For example bash accepts `> foo.txt`; it creates an empty file
-        // named "foo.txt".
         return Ok(ExitStatus::ExitedWith(0));
     }
 
-    // Functions
-    // let argv0 = argv[0].as_str();
-    // if let Some(var) = shell.get(argv0) {
-    //     if var.is_function() {
-    //         let args: Vec<String> = argv.iter().skip(1).cloned().collect();
-    //         return call_function(shell, argv0, ctx, &args, vec![]);
-    //     }
-    // }
+    // TODO: support functions
 
     // Internal commands
     let result = run_internal_command(shell, &argv, ctx.stdin, ctx.stdout, ctx.stderr, redirects);

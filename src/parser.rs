@@ -50,8 +50,6 @@ pub struct BinaryExpr {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Expr {
     Assign { name: String, rhs: Box<Expr> },
-
-    // Conditions. Evaluated to 1 if it satistifies or 0 if not.
     Eq(Box<Expr>, Box<Expr>),
     Ne(Box<Expr>, Box<Expr>),
     Lt(Box<Expr>, Box<Expr>),
